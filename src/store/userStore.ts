@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import axios from 'axios';
+import apiClient from '../lib/axios';
 
 // Pricing Engine Formula: Rate = BCH_USD / Token_USD
 // Returns: How many Tokens per 1 BCH
@@ -117,7 +117,7 @@ export const useUserStore = create<UserState>()(
                 if (!userId) return;
 
                 try {
-                    const res = await axios.get(`/api/balances?userId=${userId}&isDemo=${isDemoMode}`);
+                    const res = await apiClient.get(`/api/balances?userId=${userId}&isDemo=${isDemoMode}`);
                     if (res.data) {
                         // Transform array to Record
                         const newBalances: Record<string, Balance> = {};
@@ -141,7 +141,7 @@ export const useUserStore = create<UserState>()(
                 if (!userId) return;
 
                 try {
-                    const res = await axios.get(`/api/orders?userId=${userId}&isDemo=${isDemoMode}`);
+                    const res = await apiClient.get(`/api/orders?userId=${userId}&isDemo=${isDemoMode}`);
                     if (res.data) {
                         set({ orders: res.data });
                     }
@@ -157,7 +157,7 @@ export const useUserStore = create<UserState>()(
                 if (!userId) return false;
 
                 try {
-                    await axios.post('/api/orders', {
+                    await apiClient.post('/api/orders', {
                         ...order,
                         userId,
                         variant: order.variant || 'spot',
@@ -180,7 +180,7 @@ export const useUserStore = create<UserState>()(
                 if (!userId) return;
 
                 try {
-                    await axios.delete(`/api/orders/${orderId}?userId=${userId}`);
+                    await apiClient.delete(`/api/orders/${orderId}?userId=${userId}`);
                     await get().fetchOrders();
                     await get().fetchBalances();
                 } catch (e) {
