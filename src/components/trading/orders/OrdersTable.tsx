@@ -5,13 +5,17 @@ import { useUserStore, type Order } from '../../../store/userStore';
 
 interface OrdersTableProps {
     variant?: 'spot' | 'futures';
+    controlledStatus?: 'Open' | 'History' | 'All';
 }
 
-const OrdersTable: React.FC<OrdersTableProps> = ({ variant = 'spot' }) => {
+const OrdersTable: React.FC<OrdersTableProps> = ({ variant = 'spot', controlledStatus }) => {
     const { orders, cancelOrder } = useUserStore();
 
     // Filters State
-    const [statusFilter, setStatusFilter] = useState<'All' | 'Open' | 'History'>('Open');
+    const [localStatusFilter, setLocalStatusFilter] = useState<'All' | 'Open' | 'History'>('Open');
+
+    // Use controlled status if provided, otherwise local
+    const statusFilter = controlledStatus || localStatusFilter;
     const [pairFilter, setPairFilter] = useState('');
     const [sideFilter, setSideFilter] = useState<'All' | 'Buy' | 'Sell'>('All');
     const [typeFilter, setTypeFilter] = useState<'All' | 'Limit' | 'Market'>('All');
@@ -137,19 +141,21 @@ const OrdersTable: React.FC<OrdersTableProps> = ({ variant = 'spot' }) => {
         <div className="flex flex-col h-full bg-surface">
             {/* Filter Bar */}
             <div className="flex flex-wrap items-center gap-4 p-4 border-b border-border">
-                {/* Status Tabs */}
-                <div className="flex bg-background rounded-lg p-1 border border-border">
-                    {(['Open', 'History', 'All'] as const).map(tab => (
-                        <button
-                            key={tab}
-                            onClick={() => setStatusFilter(tab)}
-                            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${statusFilter === tab ? 'bg-surface shadow-sm text-text-primary' : 'text-text-secondary hover:text-text-primary'
-                                }`}
-                        >
-                            {tab === 'Open' ? 'Open Orders' : tab === 'History' ? 'Order History' : 'All Orders'}
-                        </button>
-                    ))}
-                </div>
+                {/* Status Tabs - Only show if not controlled */}
+                {!controlledStatus && (
+                    <div className="flex bg-background rounded-lg p-1 border border-border">
+                        {(['Open', 'History', 'All'] as const).map(tab => (
+                            <button
+                                key={tab}
+                                onClick={() => setLocalStatusFilter(tab)}
+                                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${statusFilter === tab ? 'bg-surface shadow-sm text-text-primary' : 'text-text-secondary hover:text-text-primary'
+                                    }`}
+                            >
+                                {tab === 'Open' ? 'Open Orders' : tab === 'History' ? 'Order History' : 'All Orders'}
+                            </button>
+                        ))}
+                    </div>
+                )}
 
                 {/* Search */}
                 <div className="relative">
