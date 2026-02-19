@@ -47,6 +47,19 @@ const Header: React.FC = () => {
 
             {/* Right: Actions */}
             <div className="flex items-center gap-4 text-text-secondary">
+                {/* Reset Account Button - Helper for Demo/Dev */}
+                <button
+                    onClick={() => {
+                        if (confirm('This will reset your demo account and clear all local data. Continue?')) {
+                            localStorage.clear();
+                            window.location.reload();
+                        }
+                    }}
+                    className="hidden md:flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-500 hover:text-red-400 border border-red-500/30 rounded hover:bg-red-500/10 transition-colors mr-2"
+                >
+                    Reset
+                </button>
+
                 {/* Demo Mode Toggle */}
                 <div className="hidden md:flex items-center gap-2 mr-2">
                     <span className={`text-xs font-bold ${isDemoMode ? 'text-primary' : 'text-text-disabled'}`}>DEMO</span>
