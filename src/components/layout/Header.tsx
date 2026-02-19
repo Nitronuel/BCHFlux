@@ -33,7 +33,7 @@ const Header: React.FC = () => {
                     {navItems.map((item) => (
                         <div key={item.name} className="relative group h-full flex items-center">
                             <Link
-                                to={item.path === '/trade' ? '/trade/spot/BTCUSDT' : item.path === '/leverage' ? '/leverage/BTCUSDT' : item.path}
+                                to={item.path === '/trade' ? '/trade/spot/BCHUSDT' : item.path === '/leverage' ? '/leverage/BCHUSDT' : item.path}
                                 className={`px-3 py-2 text-sm font-medium transition-colors flex items-center gap-1 ${isActive(item.path) ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}
                             >
                                 {item.name}

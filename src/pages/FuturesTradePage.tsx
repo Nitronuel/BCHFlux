@@ -32,6 +32,14 @@ const FuturesTradePage: React.FC = () => {
     const currentMarket = markets.find(m => m.symbol.toLowerCase() === symbol);
     const coinId = currentMarket?.id || 'bitcoin-cash';
 
+    // Redirect if pair is valid but not found in markets (e.g. BTC when we only support BCH)
+    // Only do this after markets are initialized
+    useEffect(() => {
+        if (markets.length > 0 && !currentMarket) {
+            navigate('/leverage/BCHUSDT', { replace: true });
+        }
+    }, [markets.length, currentMarket, navigate]);
+
     const price = currentMarket?.current_price ?? 0;
     const change = currentMarket?.price_change_percentage_24h ?? 0;
     const isPositive = change >= 0;
