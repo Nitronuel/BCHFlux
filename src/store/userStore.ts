@@ -55,6 +55,7 @@ interface UserState {
     userId: string | null;
     isDemoMode: boolean;
     balances: Record<string, Balance>;
+    leverageBalances: Record<string, Balance>; // New separate wallet
     orders: Order[];
     positions: Position[];
     initialize: () => void;
@@ -94,7 +95,10 @@ export const useUserStore = create<UserState>()(
             // Initial Balances (Demo Mode by default)
             balances: {
                 'BCH': { available: 10, locked: 0, averageBuyPrice: 350 },
-                'USDT': { available: 10000, locked: 0 },
+                'USDT': { available: 1000, locked: 0 },
+            },
+            leverageBalances: {
+                'BCH': { available: 10, locked: 0, averageBuyPrice: 350 },
             },
 
             initialize: async () => {
@@ -302,40 +306,25 @@ export const useUserStore = create<UserState>()(
             positions: [],
 
             openPosition: (positionData) => {
-                const { balances, positions } = get();
+                const { balances, leverageBalances, positions } = get();
 
-                // If Futures, use BCH as collateral
-                const isFutures = true; // For now, all leverage is futures
+                // If Futures, use BCH as collateral from Leverage Wallet
+                const isFutures = true;
                 const collateralAsset = isFutures ? 'BCH' : 'USDT';
 
-                // Position Data:
-                // size = Token Amount (e.g. 1 BTC)
-                // leverage = 10x
-                // entryPrice = 50000 (USDT)
-
-                // Margin Required in USD = (Size * EntryPrice) / Leverage
+                // Margin Required in USD
                 const notionalUSD = positionData.entryPrice * positionData.size;
                 const marginUSD = notionalUSD / positionData.leverage;
 
-                const currentBal = balances[collateralAsset] || { available: 0, locked: 0 };
+                const targetBalances = isFutures ? leverageBalances : balances;
+                const currentBal = targetBalances[collateralAsset] || { available: 0, locked: 0 };
+
                 let marginRequiredToken = 0;
 
                 if (collateralAsset === 'BCH') {
-                    // Convert Margin USD -> BCH
-                    // We need live BCH price. In a real app we'd get this from priceStore or arg.
-                    // For now, let's assume positionData passed the bchPrice or we estimate it?
-                    // Actually, let's look at OrderForm. It calculates the exact BCH amount the user wants to put up.
-                    // Let's change the interface of `openPosition` slightly?
-                    // No, let's keep it simple: WE EXPECT `margin` in the positionData to be in the COLLATERAL ASSET if passed?
-                    // The current `Position` interface says `margin` is number.
-                    // Let's overwrite:
-
-                    // If the caller (OrderForm) calculated the margin in BCH, we use that.
-                    // Let's trust positionData.margin is correct in the context of the asset?
-                    // Wait, currently `margin` in `Position` is usually USD.
-                    // Let's enforce: `margin` property on Position object is always in USD for display? 
-                    // No, that's confusing for settlement.
-                    // Let's decide: `margin` is the AMOUNT OF COLLATERAL LOCKED.
+                    // Start simple: Margin is passed as the token amount for BCH-margined?
+                    // Or we calculate token amount from USD margin using entry price?
+                    // Let's rely on positionData.margin being the correct amount of Collateral Token.
                     marginRequiredToken = positionData.margin;
                 } else {
                     marginRequiredToken = marginUSD;
@@ -352,19 +341,22 @@ export const useUserStore = create<UserState>()(
                     unrealizedPnL: 0,
                     roe: 0,
                     collateralSymbol: collateralAsset,
-                    entryCollateralPrice: positionData.entryCollateralPrice // Should be passed in
+                    entryCollateralPrice: positionData.entryCollateralPrice
+                };
+
+                const newTargetBalances = {
+                    ...targetBalances,
+                    [collateralAsset]: {
+                        ...currentBal,
+                        available: currentBal.available - marginRequiredToken,
+                        locked: currentBal.locked + marginRequiredToken
+                    }
                 };
 
                 set(() => ({
                     positions: [newPosition, ...positions],
-                    balances: {
-                        ...balances,
-                        [collateralAsset]: {
-                            ...currentBal,
-                            available: currentBal.available - marginRequiredToken,
-                            locked: currentBal.locked + marginRequiredToken
-                        }
-                    }
+                    // Dynamically update the correct wallet
+                    ...(isFutures ? { leverageBalances: newTargetBalances } : { balances: newTargetBalances })
                 }));
                 return true;
             },
@@ -373,7 +365,7 @@ export const useUserStore = create<UserState>()(
                 const position = state.positions.find(p => p.id === positionId);
                 if (!position) return state;
 
-                // 1. Calculate PnL in USD (Quote Currency)
+                // 1. Calculate PnL in USD
                 let pnlUSD = 0;
                 if (position.side === 'Long') {
                     pnlUSD = (closePrice - position.entryPrice) * position.size;
@@ -382,54 +374,42 @@ export const useUserStore = create<UserState>()(
                 }
 
                 const collateralAsset = position.collateralSymbol || 'USDT';
-                const bal = state.balances[collateralAsset] || { available: 0, locked: 0 };
+                const isFutures = collateralAsset === 'BCH'; // Infer from asset for now
+                const targetBalances = isFutures ? state.leverageBalances : state.balances;
+
+                const bal = targetBalances[collateralAsset] || { available: 0, locked: 0 };
                 let payout = 0;
 
                 if (collateralAsset === 'BCH') {
-                    // Convert PnL (USD) -> BCH
-                    // We need current BCH Price. 
-                    // In a perfect world we pass `currentCollateralPrice` to this function.
-                    // For now, let's derive it from the position's margin? No, that's entry.
-                    // Hack: We need the system's BCH price.
-                    // Let's assume `closePrice` is the Token Price.
-                    // If the traded pair IS BCH/USDT, then closePrice IS the BCH price!
-
+                    // PnL in USD -> BCH
+                    // Use closePrice if it matches the pair, or fallback
                     let bchPrice = 0;
                     if (position.symbol.includes('BCH')) {
                         bchPrice = closePrice;
                     } else {
-                        // If trading ETH/USDT, we need BCH price.
-                        // We can't easily get it inside this reducer without passing it.
-                        // For this demo, let's assume a static or slightly varied price, 
-                        // OR better: rely on `entryCollateralPrice` if we just want to simulate "stable" collateral value?
-                        // No, leverage relies on collateral value changing.
-
-                        // Let's fetch it from the store state if possible? No, store ref is `state`.
-                        // We will allow `closePrice` argument to handle this? 
-                        // Implementation Detail: We'll assume the caller passes a `bchPrice` if needed? 
-                        // No, let's keep it simple: 
-                        // We will calculate PnL in BCH based on the ENTRY price of BCH (simplified stable collateral model)
-                        // OR we assume 400 for demo if not BCH pair.
                         bchPrice = 400; // Fallback
                     }
 
-                    const pnlBCH = pnlUSD / bchPrice;
+                    const pnlBCH = bchPrice > 0 ? pnlUSD / bchPrice : 0;
                     payout = position.margin + pnlBCH;
                 } else {
                     // USDT
                     payout = position.margin + pnlUSD;
                 }
 
+                // New Balances
+                const newTargetBalances = {
+                    ...targetBalances,
+                    [collateralAsset]: {
+                        ...bal,
+                        available: Math.max(0, bal.available + payout),
+                        locked: Math.max(0, bal.locked - position.margin)
+                    }
+                };
+
                 return {
                     positions: state.positions.filter(p => p.id !== positionId),
-                    balances: {
-                        ...state.balances,
-                        [collateralAsset]: {
-                            ...bal,
-                            available: Math.max(0, bal.available + payout), // Ensure non-negative
-                            locked: Math.max(0, bal.locked - position.margin)
-                        }
-                    }
+                    ...(isFutures ? { leverageBalances: newTargetBalances } : { balances: newTargetBalances })
                 };
             }),
 
@@ -497,14 +477,26 @@ export const useUserStore = create<UserState>()(
             name: 'user-storage-v4',
             onRehydrateStorage: () => (state) => {
                 // Auto-repair any negative balances on load
-                if (state && state.balances) {
-                    const repairedBalances = repairBalances(state.balances);
-                    const hasNegative = Object.entries(state.balances).some(
-                        ([, bal]) => bal.available < 0 || bal.locked < 0
-                    );
-                    if (hasNegative) {
-                        console.warn('[UserStore] Repaired negative balances');
-                        useUserStore.setState({ balances: repairedBalances });
+                if (state) {
+                    if (state.balances) {
+                        const repairedBalances = repairBalances(state.balances);
+                        const hasNegative = Object.entries(state.balances).some(
+                            ([, bal]) => bal.available < 0 || bal.locked < 0
+                        );
+                        if (hasNegative) {
+                            console.warn('[UserStore] Repaired negative balances');
+                            useUserStore.setState({ balances: repairedBalances });
+                        }
+                    }
+                    if (state.leverageBalances) {
+                        const repairedLeverage = repairBalances(state.leverageBalances);
+                        const hasNegativeLev = Object.entries(state.leverageBalances).some(
+                            ([, bal]) => bal.available < 0 || bal.locked < 0
+                        );
+                        if (hasNegativeLev) {
+                            console.warn('[UserStore] Repaired negative leverage balances');
+                            useUserStore.setState({ leverageBalances: repairedLeverage });
+                        }
                     }
                 }
             }

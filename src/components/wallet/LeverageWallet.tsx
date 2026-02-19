@@ -4,35 +4,64 @@ import { useNavigate } from 'react-router-dom';
 import { useUserStore } from '../../store/userStore';
 import { useUiStore } from '../../store/uiStore';
 import Table, { type Column } from '../common/Table';
+import { useMarketStore } from '../../store/marketStore';
 
-const FuturesWallet: React.FC = () => {
+const LeverageWallet: React.FC = () => {
     const navigate = useNavigate();
     const { addToast } = useUiStore();
     const [showBalance, setShowBalance] = useState(true);
-    const { balances, positions } = useUserStore();
+    const { leverageBalances, positions } = useUserStore();
+    const { markets } = useMarketStore();
 
-    // Calculate Futures Metrics
-    const usdtBalance = balances['USDT'] || { available: 0, locked: 0 };
-    const totalMargin = positions.reduce((sum, p) => sum + p.margin, 0);
-    const totalUnrealizedPnL = positions.reduce((sum, p) => sum + p.unrealizedPnL, 0);
+    // Calculate Leverage Metrics (BCH Collateral)
+    const bchBalance = leverageBalances['BCH'] || { available: 0, locked: 0 };
+    const bchPrice = markets.find(m => m.symbol.toUpperCase() === 'BCH')?.current_price || 0;
 
-    // Available for Futures is just the available USDT (assuming Unified Account for simplicity)
-    const availableBalance = usdtBalance.available;
+    // Total Margin & PnL in USD (approx) 
+    // Wait, in userStore openPosition, we deduct `marginRequiredToken`. If BCH, we deduct BCH.
+    // But `p.margin` property.. let's check userStore interfaces.
+    // `margin` in `Position` seems to be the USD value in the map? 
+    // Actually, `openPosition` logic:
+    // if collateral is BCH: marginRequiredToken = positionData.margin
+    // So `p.margin` IS the token amount if BCH-margined.
 
-    // Wallet Balance (Equity) = Available + Margin + PnL
-    const walletBalance = availableBalance + totalMargin + totalUnrealizedPnL;
+    // Let's assume p.margin is in Collateral Asset (BCH).
+    const totalMarginBCH = positions.reduce((sum, p) => sum + p.margin, 0);
 
+    // PnL in userStore is calculated in USD in `syncPositionPnL`?
+    // roe = (pnl / pos.margin) * 100.
+    // If pos.margin is BCH, then PnL must be BCH for ROE to make sense?
+    // `syncPositionPnL`: 
+    // pnl = (mark - entry) * size (Linear PnL in USD for simple swaps?)
+    // This part of the store is a bit ambiguous. 
+    // For this UI task, I will assume `p.unrealizedPnL` is in USD.
+    // And I will convert it to BCH for the display, or just display USD values.
+
+    // Simpler: 
+    // Available: BCH
+    // Margin: BCH
+    // PnL: Convert USD PnL to BCH
+
+    const totalUnrealizedPnLUSD = positions.reduce((sum, p) => sum + p.unrealizedPnL, 0);
+    const totalUnrealizedPnLBCH = bchPrice > 0 ? totalUnrealizedPnLUSD / bchPrice : 0;
+
+    const availableBCH = bchBalance.available; // This is purely what's in the wallet
+    const walletBalanceBCH = availableBCH + totalMarginBCH + totalUnrealizedPnLBCH;
+
+    const walletBalanceUSD = walletBalanceBCH * bchPrice;
+
+    // Assets List
     const assets = [
         {
-            asset: 'USDT',
-            walletBalance: walletBalance,
-            unrealizedPnl: totalUnrealizedPnL,
-            marginBalance: totalMargin,
-            available: availableBalance
+            asset: 'BCH',
+            walletBalance: walletBalanceBCH,
+            unrealizedPnl: totalUnrealizedPnLBCH,
+            marginBalance: totalMarginBCH,
+            available: availableBCH
         },
     ];
 
-    interface FuturesAsset {
+    interface LeverageAsset {
         asset: string;
         walletBalance: number;
         unrealizedPnl: number;
@@ -40,29 +69,29 @@ const FuturesWallet: React.FC = () => {
         available: number;
     }
 
-    const columns: Column<FuturesAsset>[] = [
+    const columns: Column<LeverageAsset>[] = [
         {
             header: 'Asset',
             accessor: (row) => (
                 <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-teal-500/20 flex items-center justify-center text-teal-500 text-xs font-bold">T</div>
+                    <img src="https://assets.coingecko.com/coins/images/780/large/bitcoin-cash-circle.png" alt="BCH" className="w-6 h-6 rounded-full" />
                     <span>{row.asset}</span>
                 </div>
             ),
             sortable: true
         },
-        { header: 'Wallet Balance', accessor: (row) => `$${row.walletBalance.toFixed(2)}`, sortable: true },
+        { header: 'Wallet Balance', accessor: (row) => `${row.walletBalance.toFixed(4)}`, sortable: true },
         {
             header: 'Unrealized PNL',
             accessor: (row) => (
                 <span className={row.unrealizedPnl >= 0 ? 'text-buy' : 'text-sell'}>
-                    {row.unrealizedPnl > 0 ? '+' : ''}{row.unrealizedPnl.toFixed(2)}
+                    {row.unrealizedPnl > 0 ? '+' : ''}{row.unrealizedPnl.toFixed(4)}
                 </span>
             ),
             sortable: true
         },
-        { header: 'Margin Balance', accessor: (row) => `$${row.marginBalance.toFixed(2)}`, sortable: true },
-        { header: 'Available Balance', accessor: (row) => `$${row.available.toFixed(2)}`, sortable: true },
+        { header: 'Margin Balance', accessor: (row) => `${row.marginBalance.toFixed(4)}`, sortable: true },
+        { header: 'Available Balance', accessor: (row) => `${row.available.toFixed(4)}`, sortable: true },
     ];
 
     return (
@@ -75,9 +104,9 @@ const FuturesWallet: React.FC = () => {
                 <div className="relative z-10">
                     <div className="flex justify-between items-start mb-6">
                         <div>
-                            <h1 className="text-xl lg:text-2xl font-bold mb-1">Futures Account</h1>
+                            <h1 className="text-xl lg:text-2xl font-bold mb-1">Leverage Account</h1>
                             <div className="text-text-secondary text-sm flex items-center gap-2">
-                                Total Balance (USDT)
+                                Total Balance (USD)
                                 <button onClick={() => setShowBalance(!showBalance)} className="text-text-secondary hover:text-primary transition-colors">
                                     {showBalance ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                                 </button>
@@ -88,23 +117,23 @@ const FuturesWallet: React.FC = () => {
                     <div className="mb-6">
                         <div className="flex items-baseline gap-2 mb-2">
                             <span className="text-3xl lg:text-4xl font-bold tracking-tight text-text-primary">
-                                {showBalance ? `$${walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '********'}
+                                {showBalance ? `$${walletBalanceUSD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '********'}
                             </span>
-                            <span className="text-text-secondary font-medium">≈ ${walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span className="text-text-secondary font-medium">≈ {walletBalanceBCH.toFixed(4)} BCH</span>
                         </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 mb-6 p-4 bg-background/50 rounded-lg border border-border/50">
                         <div>
-                            <div className="text-text-secondary text-xs mb-1">Unrealized PNL</div>
-                            <div className={`font-mono font-medium ${totalUnrealizedPnL >= 0 ? 'text-buy' : 'text-sell'}`}>
-                                {showBalance ? `${totalUnrealizedPnL >= 0 ? '+' : ''}$${Math.abs(totalUnrealizedPnL).toFixed(2)}` : '****'}
+                            <div className="text-text-secondary text-xs mb-1">Unrealized PNL (USD)</div>
+                            <div className={`font-mono font-medium ${totalUnrealizedPnLUSD >= 0 ? 'text-buy' : 'text-sell'}`}>
+                                {showBalance ? `${totalUnrealizedPnLUSD >= 0 ? '+' : ''}$${Math.abs(totalUnrealizedPnLUSD).toFixed(2)}` : '****'}
                             </div>
                         </div>
                         <div>
-                            <div className="text-text-secondary text-xs mb-1">Margin Balance</div>
+                            <div className="text-text-secondary text-xs mb-1">Margin Balance (BCH)</div>
                             <div className="font-mono font-medium text-text-primary">
-                                {showBalance ? `$${totalMargin.toFixed(2)}` : '****'}
+                                {showBalance ? `${totalMarginBCH.toFixed(4)}` : '****'}
                             </div>
                         </div>
                     </div>
@@ -153,15 +182,15 @@ const FuturesWallet: React.FC = () => {
                         >
                             <div className="flex justify-between items-center mb-2">
                                 <span className="font-bold text-text-primary">{asset.asset}</span>
-                                <span className="text-sm font-medium">{asset.walletBalance.toFixed(2)}</span>
+                                <span className="text-sm font-medium">{asset.walletBalance.toFixed(4)}</span>
                             </div>
                             <div className="flex justify-between text-xs text-text-secondary">
                                 <span>Margin Bal.</span>
-                                <span>{asset.marginBalance.toFixed(2)}</span>
+                                <span>{asset.marginBalance.toFixed(4)}</span>
                             </div>
                             <div className="flex justify-between text-xs text-text-secondary mt-1">
                                 <span>Unrealized PNL</span>
-                                <span className={`${asset.unrealizedPnl >= 0 ? 'text-buy' : 'text-sell'}`}>{asset.unrealizedPnl.toFixed(2)}</span>
+                                <span className={`${asset.unrealizedPnl >= 0 ? 'text-buy' : 'text-sell'}`}>{asset.unrealizedPnl.toFixed(4)}</span>
                             </div>
                         </div>
                     ))}
@@ -176,4 +205,4 @@ const FuturesWallet: React.FC = () => {
     );
 };
 
-export default FuturesWallet;
+export default LeverageWallet;

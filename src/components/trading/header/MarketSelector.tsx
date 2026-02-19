@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Search, Star } from 'lucide-react';
 import { useMarketStore } from '../../../store/marketStore';
+import { formatPrice } from '../../../utils/format';
 
 interface MarketPair {
     id: string;
@@ -67,7 +68,7 @@ const MarketSelector: React.FC<MarketSelectorProps> = ({ currentPair, variant, o
             symbol: isCrossChain ? coin.symbol.toUpperCase() : `${coin.symbol.toUpperCase()}USDT`,
             base: coin.symbol.toUpperCase(),
             quote: isCrossChain ? '' : 'USDT', // No quote symbol for cross-chain
-            price: coin.current_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 }), // More decimals for shtocoins
+            price: formatPrice(coin.current_price),
             change: coin.price_change_percentage_24h ?? 0,
             volume: formatVolume(coin.total_volume),
             leverage: coin.id === 'bitcoin' || coin.id === 'ethereum' ? '125x' : '75x',

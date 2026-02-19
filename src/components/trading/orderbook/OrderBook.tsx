@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { ArrowUp, ArrowDown } from 'lucide-react';
+import { formatPrice } from '../../../utils/format';
 
 interface OrderBookProps {
     bids?: { price: number; amount: number; total: number }[];
@@ -147,7 +148,7 @@ const OrderBook: React.FC<OrderBookProps> = ({ bids = [], asks = [], currentPric
                             className="absolute right-0 top-0 bottom-0 bg-sell opacity-[0.15]"
                             style={{ width: `${(ask.total / maxTotal) * 100}%` }}
                         ></div>
-                        <span className="z-10 text-sell group-hover:font-bold">{ask.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="z-10 text-sell group-hover:font-bold">{formatPrice(ask.price)}</span>
                         <span className="z-10 text-text-primary opacity-80">{ask.amount.toFixed(4)}</span>
                         <span className="z-10 text-text-disabled text-[10px]">{ask.total.toFixed(2)}</span>
                     </div>
@@ -157,7 +158,7 @@ const OrderBook: React.FC<OrderBookProps> = ({ bids = [], asks = [], currentPric
             {/* Current Price Indicator */}
             <div className="px-3 py-3 text-lg font-bold flex items-center justify-center gap-2 border-y border-border bg-background/50">
                 <span className={currentPrice >= lastPriceRef.current ? "text-buy" : "text-sell"}>
-                    {currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {formatPrice(currentPrice)}
                 </span>
                 {currentPrice >= lastPriceRef.current ?
                     <ArrowUp className="w-4 h-4 text-buy" /> :
@@ -173,7 +174,7 @@ const OrderBook: React.FC<OrderBookProps> = ({ bids = [], asks = [], currentPric
                             className="absolute right-0 top-0 bottom-0 bg-buy opacity-[0.15]"
                             style={{ width: `${(bid.total / maxTotal) * 100}%` }}
                         ></div>
-                        <span className="z-10 text-buy group-hover:font-bold">{bid.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="z-10 text-buy group-hover:font-bold">{formatPrice(bid.price)}</span>
                         <span className="z-10 text-text-primary opacity-80">{bid.amount.toFixed(4)}</span>
                         <span className="z-10 text-text-disabled text-[10px]">{bid.total.toFixed(2)}</span>
                     </div>

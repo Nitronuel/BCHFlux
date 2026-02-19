@@ -100,7 +100,9 @@ export const fetchDexScreenerTrends = async (): Promise<MarketCoin[]> => {
 
 export const fetchTokenByAddress = async (address: string): Promise<MarketCoin | null> => {
     try {
-        const url = `${DEXSCREENER_API_BASE}/tokens/${address}`;
+        // Direct call to DexScreener API to ensure we get the latest tokens (PumpFun, etc.)
+        // The endpoint is /tokens/{tokenAddress}
+        const url = `https://api.dexscreener.com/latest/dex/tokens/${address}`;
         const response = await axios.get<{ pairs: DexScreenerPair[] }>(url);
 
         const pairs = response.data.pairs;

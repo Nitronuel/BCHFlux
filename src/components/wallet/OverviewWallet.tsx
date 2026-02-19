@@ -10,7 +10,7 @@ interface OverviewWalletProps {
 const OverviewWallet: React.FC<OverviewWalletProps> = ({ onTabChange }) => {
     const [showBalance, setShowBalance] = useState(true);
     const { markets } = useMarketStore();
-    const { balances, positions } = useUserStore();
+    const { balances, leverageBalances, positions } = useUserStore();
 
     // Calculate Prices
     const btcPrice = markets.find(m => m.id === 'bitcoin')?.current_price || 0;
@@ -28,25 +28,26 @@ const OverviewWallet: React.FC<OverviewWalletProps> = ({ onTabChange }) => {
     }
 
 
-    // --- Futures Calculation ---
-    // Futures Balance = Margin + PnL (Logic: This represents the "Equity" allocated to Futures in a separated view)
-    // However, in our Unified Account, "Margin" is technically part of the "Spot Assets" (locked USDT).
-    // To avoid double counting in "Overview", we should define:
-    // Spot = Total Assets Value (including locked margin)
-    // Futures = PnL Only? Or better:
-    // Let's display "Net Worth" breakdown.
-    // Actually, "Futures Account" usually shows Margin + PnL.
-    // If we show them side by side, Total = Spot + Futures PnL.
+    // --- Leverage Calculation ---
+    // Leverage Balance = Sum (Available + Locked) * Price + Unrealized PnL
+    let leverageUsdValue = 0;
+    for (const [symbol, balance] of Object.entries(leverageBalances)) {
+        let price = 1;
+        if (symbol !== 'USDT' && symbol !== 'USDC') {
+            const market = markets.find(m => m.symbol.toUpperCase() === symbol);
+            price = market?.current_price || 0;
+        }
+        leverageUsdValue += (balance.available + balance.locked) * price;
+    }
 
-    const totalMargin = positions.reduce((sum, p) => sum + p.margin, 0);
-    const totalUnrealizedPnL = positions.reduce((sum, p) => sum + p.unrealizedPnL, 0);
-    const futuresUsdValue = totalMargin + totalUnrealizedPnL; // This is the "Futures Account Value"
-    const futuresBtcValue = btcPrice > 0 ? futuresUsdValue / btcPrice : 0;
+    const totalUnrealizedPnLUSD = positions.reduce((sum, p) => sum + p.unrealizedPnL, 0); // Assuming PnL is in USD
 
-    // For display, "Spot" usually implies "Funding/Spot" wallet. 
-    // If we subtract margin from Spot display, it mimics moving funds to Futures.
-    // Let's do that for a cleaner separation conceptual model.
-    const displaySpotUsdValue = spotUsdValue - totalMargin;
+    // Total Leverage Account Value
+    const totalLeverageUsdValue = leverageUsdValue + totalUnrealizedPnLUSD;
+    const leverageBtcValue = btcPrice > 0 ? totalLeverageUsdValue / btcPrice : 0;
+
+    // Spot is just Spot (no margin deduction needed anymore as they are separate wallets)
+    const displaySpotUsdValue = spotUsdValue;
     const displaySpotBtcValue = btcPrice > 0 ? displaySpotUsdValue / btcPrice : 0;
 
     const accounts = [
@@ -58,15 +59,15 @@ const OverviewWallet: React.FC<OverviewWalletProps> = ({ onTabChange }) => {
             color: 'text-primary'
         },
         {
-            name: 'Futures',
-            balance: futuresUsdValue,
-            btc: futuresBtcValue,
+            name: 'Leverage',
+            balance: totalLeverageUsdValue,
+            btc: leverageBtcValue,
             change: 0,
             color: 'text-red-500'
         },
     ];
 
-    const totalBalance = displaySpotUsdValue + futuresUsdValue; // = original Spot + PnL
+    const totalBalance = displaySpotUsdValue + totalLeverageUsdValue;
     const totalBtc = btcPrice > 0 ? totalBalance / btcPrice : 0;
 
     return (

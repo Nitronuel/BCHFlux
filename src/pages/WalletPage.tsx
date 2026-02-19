@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import OverviewWallet from '../components/wallet/OverviewWallet';
 import SpotWallet from '../components/wallet/SpotWallet';
-import FuturesWallet from '../components/wallet/FuturesWallet';
+import LeverageWallet from '../components/wallet/LeverageWallet';
 
 const WalletPage: React.FC = () => {
     const [activeTab, setActiveTab] = useState('Overview');
@@ -12,8 +12,8 @@ const WalletPage: React.FC = () => {
                 return <OverviewWallet onTabChange={setActiveTab} />;
             case 'Spot':
                 return <SpotWallet />;
-            case 'Futures':
-                return <FuturesWallet />;
+            case 'Leverage':
+                return <LeverageWallet />;
             default:
                 return <OverviewWallet onTabChange={setActiveTab} />;
         }
@@ -26,7 +26,7 @@ const WalletPage: React.FC = () => {
                 <div className="lg:col-span-1 bg-background lg:bg-surface lg:rounded-lg lg:border lg:border-border lg:p-4 h-fit sticky top-16 lg:top-20 z-10 -mx-4 px-4 lg:mx-0 lg:px-4 border-b border-border lg:border-b-0">
                     <div className="text-xs font-bold text-text-secondary mb-4 px-2 hidden lg:block">WALLETS</div>
                     <nav className="flex lg:block overflow-x-auto space-x-6 lg:space-x-0 lg:space-y-1 no-scrollbar pb-0">
-                        {['Overview', 'Spot', 'Futures'].map(item => (
+                        {['Overview', 'Spot', 'Leverage'].map(item => (
                             <button
                                 key={item}
                                 onClick={() => setActiveTab(item)}

@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { usePriceStore } from '../../store/priceStore';
+import { formatPrice } from '../../utils/format';
 
 interface LivePriceProps {
     coinId: string;
     className?: string;
     showChange?: boolean;
     prefix?: string;
-    decimals?: number;
 }
 
 /**
@@ -18,7 +18,6 @@ const LivePrice: React.FC<LivePriceProps> = ({
     className = '',
     showChange = false,
     prefix = '$',
-    decimals = 2,
 }) => {
     const { prices, isLive } = usePriceStore();
     const [flash, setFlash] = useState<'up' | 'down' | null>(null);
@@ -48,10 +47,7 @@ const LivePrice: React.FC<LivePriceProps> = ({
         }
     }, [flash]);
 
-    const formattedPrice = currentPrice.toLocaleString(undefined, {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-    });
+    const formattedPrice = formatPrice(currentPrice);
 
     const flashClass = flash === 'up'
         ? 'animate-flash-green'

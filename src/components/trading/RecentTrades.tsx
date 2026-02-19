@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatPrice } from '../../utils/format';
 
 interface Trade {
     price: string;
@@ -27,7 +28,7 @@ const RecentTrades: React.FC = () => {
             <div className="flex-1 overflow-y-auto">
                 {trades.map((trade, i) => (
                     <div key={i} className="flex justify-between px-3 py-0.5 hover:bg-hover cursor-pointer">
-                        <span className={trade.side === 'buy' ? 'text-buy' : 'text-sell'}>{trade.price}</span>
+                        <span className={trade.side === 'buy' ? 'text-buy' : 'text-sell'}>{formatPrice(parseFloat(trade.price))}</span>
                         <span className="text-text-primary">{trade.amount}</span>
                         <span className="text-text-secondary">{trade.time}</span>
                     </div>

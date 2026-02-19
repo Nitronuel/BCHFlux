@@ -4,6 +4,7 @@ import Table, { type Column } from '../components/common/Table';
 import AddTokenModal from '../components/wallet/modals/AddTokenModal';
 import DeleteTokenModal from '../components/wallet/modals/DeleteTokenModal';
 import { useMarketStore } from '../store/marketStore';
+import { formatPrice } from '../utils/format';
 
 interface MarketPair {
     id: string;
@@ -84,7 +85,7 @@ const MarketsPage: React.FC = () => {
         },
         {
             header: 'Price',
-            accessor: (row) => `$${row.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            accessor: (row) => formatPrice(row.price),
             className: 'w-auto',
             sortable: true
         },
@@ -142,8 +143,8 @@ const MarketsPage: React.FC = () => {
                         <button
                             onClick={() => setIsEditing(!isEditing)}
                             className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2.5 lg:px-6 lg:py-3 rounded-lg font-bold transition-colors ${isEditing
-                                    ? 'bg-primary text-background hover:bg-opacity-90'
-                                    : 'bg-surface border border-border text-text-primary hover:bg-hover'
+                                ? 'bg-primary text-background hover:bg-opacity-90'
+                                : 'bg-surface border border-border text-text-primary hover:bg-hover'
                                 }`}
                         >
                             {isEditing ? (
