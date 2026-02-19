@@ -8,6 +8,8 @@ async function bootstrap() {
   // Enable CORS for frontend
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
     'http://localhost:5173',
+    'https://bchflux.vercel.app',
+    'https://bchflux.vercel.app/',
   ];
 
   app.enableCors({
