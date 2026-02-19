@@ -32,5 +32,6 @@ async function bootstrap() {
 
   console.log(`🚀 Server running on http://localhost:${port}`);
   console.log(`📡 CORS enabled for: ${allowedOrigins.join(', ')}`);
+  console.log('🔄 Server restarted - Streams Module Debug');
 }
 bootstrap();

@@ -31,6 +31,8 @@ interface PendingOrder {
     gasAirdrop?: string;
     destinationAddress?: string;
     targetChain?: string;
+    marginAmount?: string;
+    marginAsset?: string;
 }
 
 const OrderForm: React.FC<OrderFormProps> = ({
@@ -156,6 +158,9 @@ const OrderForm: React.FC<OrderFormProps> = ({
         let total = '0';
         let bchCostStr = '0';
         let gasAirdrop = '';
+        let marginAmount = '';
+        let marginAsset = '';
+        let finalAmount = amount; // Default to input amount being position size (Standard) or Token Amount
 
         if (isCrossChain) {
             // Swap Logic - Use pre-calculated bchCost
@@ -168,8 +173,27 @@ const OrderForm: React.FC<OrderFormProps> = ({
             else if (chainId === 'ethereum') gasAirdrop = '0.005 ETH';
             else if (chainId === 'base') gasAirdrop = '0.002 ETH';
             else gasAirdrop = 'Native Gas';
+        } else if (variant === 'futures') {
+            // Futures Logic
+            // Input 'amount' is Margin in BCH
+            const marginBCH = parseFloat(amount);
+            if (!marginBCH || marginBCH <= 0) return;
+
+            marginAmount = marginBCH.toFixed(4);
+            marginAsset = 'BCH';
+
+            // Calculate Position Size
+            const marginUSD = marginBCH * bchPrice;
+            const notionalUSD = marginUSD * leverage;
+            const tokenPrice = orderType === 'Market' ? (currentPrice || 0) : parseFloat(price);
+
+            if (tokenPrice > 0) {
+                const positionSizeTokens = notionalUSD / tokenPrice;
+                finalAmount = positionSizeTokens.toFixed(4); // Amount displayed as Position Size
+                total = notionalUSD.toFixed(2); // Total displayed as Notional Value
+            }
         } else {
-            // Standard Logic
+            // Standard Spot Logic
             const p = orderType === 'Market' ? (currentPrice || 0) : parseFloat(price);
             total = (parseFloat(amount) * p).toFixed(2);
         }
@@ -187,7 +211,7 @@ const OrderForm: React.FC<OrderFormProps> = ({
             price: (orderType === 'Market' || isCrossChain) ? (currentPrice?.toString() || '0') : price,
             stopPrice,
             triggerCondition: condition,
-            amount,
+            amount: finalAmount, // Position Size for Futures
             total,
             leverage,
             baseSymbol,
@@ -195,8 +219,9 @@ const OrderForm: React.FC<OrderFormProps> = ({
             isCrossChain,
             bchCost: bchCostStr,
             gasAirdrop,
-
-            targetChain
+            targetChain,
+            marginAmount,
+            marginAsset
         });
         setIsModalOpen(true);
     };
@@ -308,19 +333,34 @@ const OrderForm: React.FC<OrderFormProps> = ({
         // --- Standard Order Flow ---
         if (variant === 'futures') {
             const { openPosition, addOrder } = useUserStore.getState();
+
+            // In Futures mode, `amount` is Margin (BCH)
+            const marginBCH = parseFloat(amount) || 0;
+            if (marginBCH <= 0) return;
+
+            // Derived values
+            // Margin USD = Margin BCH * BCH Price
+            const marginUSD = marginBCH * bchPrice;
+            // Position Value USD = Margin USD * Leverage
+            const notionalUSD = marginUSD * leverage;
+            // Position Size (Tokens) = Notional USD / Token Price
+            const tokenPrice = orderType === 'Market' ? (currentPrice || 0) : parseFloat(price);
+            if (tokenPrice <= 0) return;
+
+            const positionSizeTokens = notionalUSD / tokenPrice;
+
             if (orderType === 'Market') {
-                const orderPrice = currentPrice;
-                if (!orderPrice || orderPrice <= 0) return;
                 const success = openPosition({
                     symbol: baseSymbol,
                     side: side === 'buy' ? 'Long' : 'Short',
-                    size: parseFloat(amount),
+                    size: positionSizeTokens,
                     leverage,
-                    entryPrice: orderPrice,
-                    margin: (orderPrice * parseFloat(amount)) / leverage,
+                    entryPrice: tokenPrice,
+                    margin: marginBCH, // We pass BCH margin now
                     liquidationPrice: side === 'buy'
-                        ? orderPrice * (1 - 0.9 / leverage)
-                        : orderPrice * (1 + 0.9 / leverage)
+                        ? tokenPrice * (1 - (1 / leverage) + 0.005) // approx liq price logic
+                        : tokenPrice * (1 + (1 / leverage) - 0.005),
+                    entryCollateralPrice: bchPrice
                 });
                 if (success) {
                     addToast(`${side === 'buy' ? 'Long' : 'Short'} Position Opened`, 'success');
@@ -329,22 +369,29 @@ const OrderForm: React.FC<OrderFormProps> = ({
                     addToast('Insufficient Margin', 'error');
                 }
             } else {
-                const orderPrice = parseFloat(price);
-                if (!orderPrice || orderPrice <= 0) return;
+                // Limit Order Logic for Futures... complex because we need to lock collateral.
+                // For this demo, let's treat it similar to openPosition but as a "Pending" order?
+                // The current `addOrder` deals with USDT.
+                // Let's simplify: Futures Limit Orders are not fully implemented in this BCH collateral demo refactor yet.
+                // We will just allow Market for now or auto-convert?
+                // Let's just create the order structure similar to before but with note.
+                // Actually, `addOrder` expects `amount` to be Token Amount usually.
+
                 const newOrder = {
                     id: Math.random().toString(36).substr(2, 9),
                     symbol: `${baseSymbol.toUpperCase()}/${quoteSymbol.toUpperCase()}`,
                     side: side,
                     type: orderType,
-                    price: orderPrice,
-                    amount: parseFloat(amount),
-                    total: parseFloat(amount) * orderPrice,
+                    price: tokenPrice,
+                    amount: positionSizeTokens, // Order is placed for Token Amount
+                    total: notionalUSD,
                     timestamp: Date.now(),
                     status: 'Open' as const,
                     variant: 'futures' as const,
                     leverage: leverage,
                     stopPrice: orderType === 'Stop Limit' ? parseFloat(pendingOrder?.stopPrice || '0') : undefined,
-                    triggerCondition: pendingOrder?.triggerCondition
+                    triggerCondition: pendingOrder?.triggerCondition,
+                    chainId // Pass chainId if needed
                 };
                 const success = await addOrder(newOrder);
                 if (success) {
@@ -400,29 +447,47 @@ const OrderForm: React.FC<OrderFormProps> = ({
             return;
         }
 
+        if (variant === 'futures') {
+            // Futures: Slider sets Margin % of BCH Balance
+            // We are setting the "amount" input, which now represents BCH MARGIN (not position size)
+            // wait, we reused `amount` state for input.
+            // In Futures mode, `amount` = BCH Margin Amount.
+            const availableBCH = balances['BCH']?.available || 0;
+            setAmount((availableBCH * percentage).toFixed(4));
+            return;
+        }
+
         if (side === 'buy') {
             const available = balances[quoteSymbol]?.available || 0;
-            const purchasingPower = variant === 'futures' ? available * leverage : available;
+            // Spot Buy: Amount = (USDT Available) / Price
             const targetPrice = parseFloat(price) || currentPrice || 0;
             if (targetPrice > 0) {
-                const max = purchasingPower / targetPrice;
-                setAmount((max * percentage * 0.99).toFixed(4));
+                const max = available / targetPrice;
+                setAmount((max * percentage).toFixed(4));
             }
         } else {
-            if (variant === 'futures') {
-                const available = balances['USDT']?.available || 0;
-                const purchasingPower = available * leverage;
-                const targetPrice = parseFloat(price) || currentPrice || 0;
-                if (targetPrice > 0) {
-                    const max = purchasingPower / targetPrice;
-                    setAmount((max * percentage * 0.99).toFixed(4));
-                }
-            } else {
-                const available = balances[baseSymbol]?.available || 0;
-                setAmount((available * percentage).toFixed(4));
-            }
+            // Spot Sell: Amount = Token Available
+            const available = balances[baseSymbol]?.available || 0;
+            setAmount((available * percentage).toFixed(4));
         }
     };
+
+    // Calculate Futures Details for Display
+    const futuresDetails = React.useMemo(() => {
+        if (variant !== 'futures' || !amount) return null;
+
+        const marginBCH = parseFloat(amount) || 0;
+        const marginUSD = marginBCH * bchPrice;
+        const positionSizeUSD = marginUSD * leverage;
+        const tokenPrice = currentPrice || 0;
+        const positionSizeToken = tokenPrice > 0 ? positionSizeUSD / tokenPrice : 0;
+
+        return {
+            marginUSD,
+            positionSizeUSD,
+            positionSizeToken
+        };
+    }, [variant, amount, bchPrice, leverage, currentPrice]);
 
     return (
         <div className="p-4 bg-surface h-full flex flex-col text-sm">
@@ -504,7 +569,9 @@ const OrderForm: React.FC<OrderFormProps> = ({
                 {/* Amount Input */}
                 <div>
                     <div className="flex justify-between text-xs text-text-secondary mb-1">
-                        <span>Amount ({baseSymbol})</span>
+                        <span>
+                            {variant === 'futures' ? 'Margin (BCH)' : `Amount (${baseSymbol})`}
+                        </span>
                     </div>
                     <div className="relative group">
                         <input
@@ -513,10 +580,15 @@ const OrderForm: React.FC<OrderFormProps> = ({
                             onChange={e => isCrossChain ? handleTokenAmountChange(e.target.value) : setAmount(e.target.value)}
                             className="w-full bg-background border border-border rounded px-3 py-2.5 text-right text-text-primary focus:border-primary outline-none transition-colors"
                         />
+                        {variant === 'futures' && futuresDetails && (
+                            <div className="absolute right-3 bottom-0.5 text-[10px] text-text-secondary">
+                                ≈ ${futuresDetails.marginUSD.toFixed(2)}
+                            </div>
+                        )}
                     </div>
                 </div>
 
-                {/* Slider - Only for non-cross-chain or when selling */}
+                {/* Slider */}
                 {!isCrossChain && (
                     <div className="py-2">
                         <div className="flex justify-between mt-1 text-xs text-text-disabled">
@@ -533,25 +605,45 @@ const OrderForm: React.FC<OrderFormProps> = ({
                     </div>
                 )}
 
+                {/* Futures Info Block */}
+                {variant === 'futures' && futuresDetails && (
+                    <div className="bg-background/50 p-3 rounded border border-border space-y-2 text-xs">
+                        <div className="flex justify-between">
+                            <span className="text-text-secondary">Position Value</span>
+                            <span className="font-medium text-primary">${futuresDetails.positionSizeUSD.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-text-secondary">Position Size</span>
+                            <span className="font-medium">{futuresDetails.positionSizeToken.toFixed(4)} {baseSymbol}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-text-secondary">Leverage</span>
+                            <span className="font-medium">{leverage}x</span>
+                        </div>
+                    </div>
+                )}
+
                 {/* Total (BCH for cross-chain, quote for standard) */}
-                <div>
-                    <div className="flex justify-between text-xs text-text-secondary mb-1">
-                        <span>Total ({isCrossChain ? 'BCH' : quoteSymbol})</span>
+                {variant !== 'futures' && (
+                    <div>
+                        <div className="flex justify-between text-xs text-text-secondary mb-1">
+                            <span>Total ({isCrossChain ? 'BCH' : quoteSymbol})</span>
+                        </div>
+                        <div className="relative group">
+                            <input
+                                type="text"
+                                readOnly={!isCrossChain}
+                                value={
+                                    isCrossChain
+                                        ? bchAmount
+                                        : (amount && (price || currentPrice) ? (parseFloat(amount) * (parseFloat(price) || currentPrice || 0)).toFixed(2) : '-')
+                                }
+                                onChange={e => isCrossChain && handleBchAmountChange(e.target.value)}
+                                className={`w-full bg-background border border-border rounded px-3 py-2.5 text-right text-text-primary outline-none ${isCrossChain ? 'focus:border-primary transition-colors' : ''}`}
+                            />
+                        </div>
                     </div>
-                    <div className="relative group">
-                        <input
-                            type="text"
-                            readOnly={!isCrossChain}
-                            value={
-                                isCrossChain
-                                    ? bchAmount
-                                    : (amount && (price || currentPrice) ? (parseFloat(amount) * (parseFloat(price) || currentPrice || 0)).toFixed(2) : '-')
-                            }
-                            onChange={e => isCrossChain && handleBchAmountChange(e.target.value)}
-                            className={`w-full bg-background border border-border rounded px-3 py-2.5 text-right text-text-primary outline-none ${isCrossChain ? 'focus:border-primary transition-colors' : ''}`}
-                        />
-                    </div>
-                </div>
+                )}
 
                 {/* BCH Percentage Slider - Only for cross-chain buy */}
                 {isCrossChain && side === 'buy' && (
@@ -573,7 +665,12 @@ const OrderForm: React.FC<OrderFormProps> = ({
                 {/* Avail */}
                 <div className="flex justify-between text-xs text-text-secondary">
                     <span>Avail</span>
-                    <span>{availBalance.toFixed(4)} {availCurrency}</span>
+                    <span>
+                        {variant === 'futures'
+                            ? `${(balances['BCH']?.available || 0).toFixed(4)} BCH`
+                            : `${availBalance.toFixed(4)} ${availCurrency}`
+                        }
+                    </span>
                 </div>
 
                 <button
@@ -590,7 +687,7 @@ const OrderForm: React.FC<OrderFormProps> = ({
                         </div>
                     ) : (
                         variant === 'futures'
-                            ? (side === 'buy' ? `Long (${leverage}x)` : `Short (${leverage}x)`)
+                            ? (side === 'buy' ? `Long ${baseSymbol}` : `Short ${baseSymbol}`)
                             : (side === 'buy' ? 'Buy' : 'Sell')
                     )}
                 </button>

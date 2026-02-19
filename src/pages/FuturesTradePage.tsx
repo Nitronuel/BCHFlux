@@ -9,6 +9,7 @@ import UserTabs from '../components/trading/UserTabs';
 import LeverageSelector from '../components/trading/LeverageSelector';
 import { useMarketStore } from '../store/marketStore';
 import { useUserStore } from '../store/userStore';
+import { useUiStore } from '../store/uiStore';
 
 const FuturesTradePage: React.FC = () => {
     const { pair = 'BCHUSDT' } = useParams();
@@ -17,7 +18,8 @@ const FuturesTradePage: React.FC = () => {
     const [isChartVisible, setIsChartVisible] = useState(false);
 
     const { markets, initializeMarkets } = useMarketStore();
-    const { balances } = useUserStore();
+    const { balances, updateBalance } = useUserStore();
+    const { addToast } = useUiStore();
 
     useEffect(() => {
         if (markets.length === 0) {
@@ -155,7 +157,11 @@ const FuturesTradePage: React.FC = () => {
                 <div className={`hidden lg:flex flex-1 flex-col min-w-0 lg:h-full`}>
                     <div className="flex-1 bg-surface border-b border-border relative min-h-[450px]">
                         <div className="absolute inset-0 w-full h-full">
-                            <TradingViewChart symbol={coinId} />
+                            <TradingViewChart
+                                symbol={coinId}
+                                chainId={currentMarket?.chainId}
+                                pairAddress={currentMarket?.pairAddress}
+                            />
                         </div>
                     </div>
                     <div className="h-[250px] shrink-0 border-r border-border">
@@ -203,7 +209,15 @@ const FuturesTradePage: React.FC = () => {
                             </div>
                         </div>
                         <div className="mt-4 flex gap-2">
-                            <button className="flex-1 py-2 bg-text-disabled/20 rounded hover:bg-text-disabled/40 transition-colors text-xs font-medium">Add Collateral</button>
+                            <button
+                                onClick={() => {
+                                    updateBalance('BCH', 10);
+                                    addToast('Added 10 BCH to collateral wallet', 'success');
+                                }}
+                                className="flex-1 py-2 bg-text-disabled/20 rounded hover:bg-text-disabled/40 transition-colors text-xs font-medium"
+                            >
+                                Add Collateral (+10 BCH)
+                            </button>
                         </div>
                     </div>
                 </div>

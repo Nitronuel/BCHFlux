@@ -82,9 +82,45 @@ export async function fetchCoinMetadata(coinIds: string[]): Promise<MarketCoin[]
 export async function fetchSingleCoinMetadata(coinId: string): Promise<MarketCoin | null> {
     console.log('[API] Fetching metadata for single coin:', coinId);
     try {
-        const url = `${COINGECKO_API_BASE}/coins/markets?vs_currency=usd&ids=${coinId}&sparkline=false`;
-        const data = await fetchWithRetry<MarketCoin[]>(url);
-        return data[0] ?? null;
+        // Parallel fetch: CoinGecko Metadata + DexScreener Pair Info
+        const geckoUrl = `${COINGECKO_API_BASE}/coins/markets?vs_currency=usd&ids=${coinId}&sparkline=false`;
+
+        // We can't query DexScreener by CoinGecko ID directly, but we can search by the symbol/name later
+        // or we can try to find the pair if we had the address.
+        // Since we only have the ID here (e.g. 'peanut-the-squirrel'), we rely on CoinGecko first.
+
+        const [geckoData] = await Promise.all([
+            fetchWithRetry<MarketCoin[]>(geckoUrl)
+        ]);
+
+        const coin = geckoData[0];
+        if (!coin) return null;
+
+        // NOW, try to find the best pair on DexScreener to get the chart
+        // We search DexScreener by the token's symbol (e.g. 'PNUT')
+        try {
+            const dexUrl = `https://api.dexscreener.com/latest/dex/search?q=${coin.symbol}`;
+            const dexResponse = await axios.get(dexUrl);
+            const pairs = dexResponse.data.pairs;
+
+            if (pairs && pairs.length > 0) {
+                // Find the liquidity pool with the highest volume that matches the symbol
+                // Sort by volume
+                pairs.sort((a: any, b: any) => b.volume?.h24 - a.volume?.h24);
+
+                const bestPair = pairs[0];
+                if (bestPair) {
+                    console.log(`[API] Found DexScreener pair for ${coin.symbol}: ${bestPair.chainId}/${bestPair.pairAddress}`);
+                    coin.chainId = bestPair.chainId;
+                    coin.pairAddress = bestPair.pairAddress;
+                }
+            }
+        } catch (dexErr) {
+            console.warn('[API] Failed to fetch DexScreener info for custom token:', dexErr);
+            // Non-fatal, just won't have the chart
+        }
+
+        return coin;
     } catch {
         console.error('[API] Failed to fetch coin:', coinId);
         return null;

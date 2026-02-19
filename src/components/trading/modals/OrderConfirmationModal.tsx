@@ -16,6 +16,8 @@ interface OrderDetails {
     gasAirdrop?: string;
 
     targetChain?: string;
+    marginAsset?: string;
+    marginAmount?: string;
 }
 
 interface OrderConfirmationModalProps {
@@ -124,16 +126,31 @@ const OrderConfirmationModal: React.FC<OrderConfirmationModalProps> = ({
                                     <span className="font-medium text-white">{priceNum.toLocaleString(undefined, { minimumFractionDigits: 2 })} USDT</span>
                                 </div>
                                 <div className="flex justify-between text-sm">
-                                    <span className="text-text-secondary">Amount</span>
+                                    <span className="text-text-secondary">Position Size</span>
                                     <span className="font-medium text-white">{details.amount} {details.baseSymbol}</span>
                                 </div>
 
                                 <div className="h-px bg-border/50 my-2" />
 
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-text-secondary">Total Cost</span>
-                                    <span className="font-medium text-white">{details.total} USDT</span>
-                                </div>
+                                {isFutures ? (
+                                    <>
+                                        <div className="flex justify-between text-sm">
+                                            <span className="text-text-secondary">Margin Cost</span>
+                                            <span className="font-medium text-white">
+                                                {details.marginAmount ? `${details.marginAmount} ${details.marginAsset}` : `${details.total} USDT`}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between text-sm">
+                                            <span className="text-text-secondary">Notional Value</span>
+                                            <span className="font-medium text-text-secondary">{details.total} USDT</span>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-text-secondary">Total Cost</span>
+                                        <span className="font-medium text-white">{details.total} USDT</span>
+                                    </div>
+                                )}
 
                                 {isFutures && (
                                     <>

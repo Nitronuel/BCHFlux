@@ -16,7 +16,7 @@ const Header: React.FC = () => {
         { name: 'Leverage', path: '/leverage', hasDropdown: true },
 
         { name: 'Wallet', path: '/wallet', hasDropdown: true },
-        { name: 'Orders', path: '/orders', hasDropdown: true },
+        { name: 'Payroll', path: '/payroll', hasDropdown: false },
     ];
 
     return (

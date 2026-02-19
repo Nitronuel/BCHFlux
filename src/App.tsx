@@ -6,9 +6,9 @@ import MarketsPage from './pages/MarketsPage';
 import SpotTradePage from './pages/SpotTradePage';
 import FuturesTradePage from './pages/FuturesTradePage';
 import WalletPage from './pages/WalletPage';
-import OrdersPage from './pages/OrdersPage';
 import ProfilePage from './pages/ProfilePage';
 import NotificationsPage from './pages/NotificationsPage';
+import PayrollPage from './pages/PayrollPage';
 import Toast from './components/common/Toast';
 
 import { useMarketStore } from './store/marketStore';
@@ -59,7 +59,7 @@ function App() {
           <Route path="/trade/spot/:pair" element={<SpotTradePage />} />
           <Route path="/leverage/:pair" element={<FuturesTradePage />} />
           <Route path="/wallet/*" element={<WalletPage />} />
-          <Route path="/orders/*" element={<OrdersPage />} />
+          <Route path="/payroll" element={<PayrollPage />} />
           <Route path="/profile/*" element={<ProfilePage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="*" element={<div className="p-10 pt-20 text-2xl">404 Not Found</div>} />

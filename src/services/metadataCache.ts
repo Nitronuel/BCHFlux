@@ -4,7 +4,7 @@
 
 import type { MarketCoin } from './api';
 
-const CACHE_KEY = 'bchflux_market_data_v3'; // Bumped version to force refresh for meme coins
+const CACHE_KEY = 'bchflux_market_data_v4'; // Bumped version to force refresh for meme coins
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours for metadata
 const PRICE_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes for prices (fallback if WebSocket fails)
 

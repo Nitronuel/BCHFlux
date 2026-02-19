@@ -133,13 +133,11 @@ const SpotTradePage: React.FC = () => {
             {/* Mobile Chart Overlay */}
             {isChartVisible && (
                 <div className="lg:hidden h-[400px] bg-surface border-b border-border">
-                    <div className="lg:hidden h-[400px] bg-surface border-b border-border">
-                        <TradingViewChart
-                            symbol={coinId}
-                            chainId={currentMarket?.chainId}
-                            pairAddress={currentMarket?.pairAddress}
-                        />
-                    </div>
+                    <TradingViewChart
+                        symbol={coinId}
+                        chainId={currentMarket?.chainId}
+                        pairAddress={currentMarket?.pairAddress}
+                    />
                 </div>
             )}
 

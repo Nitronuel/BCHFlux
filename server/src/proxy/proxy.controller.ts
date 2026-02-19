@@ -57,4 +57,20 @@ export class ProxyController {
         const coinIds = ids ? ids.split(',') : [];
         return this.proxyService.getCoinGeckoMarkets(coinIds);
     }
+    /**
+     * GET /api/proxy/dexscreener/bars/:dexId/:chainId/:pairAddress
+     * Proxy DexScreener chart bars
+     */
+    @Get('dexscreener/bars/:dexId/:chainId/:pairAddress')
+    async getDexScreenerBars(
+        @Param('dexId') dexId: string,
+        @Param('chainId') chainId: string,
+        @Param('pairAddress') pairAddress: string,
+        @Query('from') from: number,
+        @Query('to') to: number,
+        @Query('res') res: string,
+        @Query('cb') cb: string,
+    ) {
+        return this.proxyService.getDexScreenerBars(dexId, chainId, pairAddress, from, to, res, cb);
+    }
 }

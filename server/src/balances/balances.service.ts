@@ -46,7 +46,10 @@ export class BalancesService {
 
         // 1. Get current balance
         const balance = await this.getBalance(userId, symbol, isDemo);
+        require('fs').appendFileSync('server-debug.log', `[lockFunds] ${new Date().toISOString()} User: ${userId}, Symbol: ${symbol}, Amount: ${amount}, Demo: ${isDemo}, Avail: ${balance.available}\n`);
+
         if (balance.available < amount) {
+            console.error(`[lockFunds] Insufficient balance. Req: ${amount}, Avail: ${balance.available}`);
             throw new BadRequestException(`Insufficient ${symbol} balance`);
         }
 
@@ -137,6 +140,54 @@ export class BalancesService {
                 .eq('is_demo', isDemo);
 
             if (err2) throw new Error(`Trade failed (Credit): ${err2.message}`);
+        }
+
+        return true;
+    }
+    // Transfer funds from User A (Locked) to User B (Available)
+    // Used for Streams/Payroll settlement
+    async transferLockedToAvailable(fromUserId: string, toUserId: string, symbol: string, amount: number, isDemo: boolean = false) {
+        const admin = this.supabaseService.getAdminClient();
+
+        // 1. Debit Sender (Decrease Locked)
+        const senderBal = await this.getBalance(fromUserId, symbol, isDemo);
+        const { error: err1 } = await admin
+            .from('balances')
+            .update({
+                locked: Math.max(0, senderBal.locked - amount),
+                updated_at: new Date()
+            })
+            .eq('user_id', fromUserId)
+            .eq('token_symbol', symbol)
+            .eq('is_demo', isDemo);
+
+        if (err1) throw new Error(`Transfer failed (Debit): ${err1.message}`);
+
+        // 2. Credit Receiver (Increase Available)
+        let receiverBal = await this.getBalance(toUserId, symbol, isDemo);
+
+        if (receiverBal.available === 0 && receiverBal.locked === 0) {
+            // Create if not exists
+            await admin
+                .from('balances')
+                .upsert({
+                    user_id: toUserId,
+                    token_symbol: symbol,
+                    available: amount,
+                    is_demo: isDemo
+                }, { onConflict: 'user_id, token_symbol, is_demo' });
+        } else {
+            const { error: err2 } = await admin
+                .from('balances')
+                .update({
+                    available: receiverBal.available + amount,
+                    updated_at: new Date()
+                })
+                .eq('user_id', toUserId)
+                .eq('token_symbol', symbol)
+                .eq('is_demo', isDemo);
+
+            if (err2) throw new Error(`Transfer failed (Credit): ${err2.message}`);
         }
 
         return true;

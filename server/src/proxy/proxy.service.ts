@@ -4,6 +4,7 @@ import axios from 'axios';
 @Injectable()
 export class ProxyService {
     private readonly DEXSCREENER_BASE = 'https://api.dexscreener.com/latest/dex';
+    private readonly DEXSCREENER_IO_BASE = 'https://io.dexscreener.com';
     private readonly COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
 
     /**
@@ -88,6 +89,31 @@ export class ProxyService {
             console.error('[ProxyService] DexScreener search error:', error);
             throw new HttpException(
                 'Failed to search DexScreener',
+                HttpStatus.BAD_GATEWAY,
+            );
+        }
+    }
+    /**
+     * Fetch chart bars from DexScreener IO API
+     * URL pattern: /dex/chart/amm/v3/{dexId}/bars/{chainId}/{pairAddress}
+     */
+    async getDexScreenerBars(dexId: string, chainId: string, pairAddress: string, from: number, to: number, res: string, cb: string) {
+        try {
+            const url = `${this.DEXSCREENER_IO_BASE}/dex/chart/amm/v3/${dexId}/bars/${chainId}/${pairAddress}?start=${from}&end=${to}&res=${res}&cb=${cb}`;
+
+            // DexScreener IO requires Origin/Referer to be set to dexscreener.com
+            const response = await axios.get(url, {
+                headers: {
+                    'Origin': 'https://dexscreener.com',
+                    'Referer': 'https://dexscreener.com/',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+            });
+            return response.data;
+        } catch (error) {
+            console.error('[ProxyService] DexScreener bars fetch error:', error);
+            throw new HttpException(
+                'Failed to fetch chart bars from DexScreener',
                 HttpStatus.BAD_GATEWAY,
             );
         }

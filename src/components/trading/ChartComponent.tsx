@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp } from 'lightweight-charts';
-import { fetchOHLCData, generateMockOHLC, type OHLCData } from '../../services/chartData';
+import { fetchOHLCData, fetchDexScreenerOHLC, generateMockOHLC, type OHLCData } from '../../services/chartData';
 import { useMarketStore } from '../../store/marketStore';
 
 interface ChartComponentProps {
     coinId?: string;
     timeframe?: '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+    currChainId?: string;
+    pairAddress?: string;
 }
 
 // Timeframe to seconds mapping
@@ -20,7 +22,9 @@ const TIMEFRAME_SECONDS: Record<string, number> = {
 
 const ChartComponent: React.FC<ChartComponentProps> = ({
     coinId = 'bitcoin-cash',
-    timeframe = '1m'
+    timeframe = '1m',
+    currChainId,
+    pairAddress
 }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -124,7 +128,16 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
             // CoinGecko OHLC: days=1 returns 5-min candles, days=7 returns hourly
             const days = selectedTimeframe === '1m' || selectedTimeframe === '5m' ? 1 :
                 selectedTimeframe === '15m' || selectedTimeframe === '1h' ? 7 : 30;
-            const data = await fetchOHLCData(coinId, days);
+
+            let data: OHLCData[];
+
+            if (currChainId && pairAddress) {
+                // Fetch from DexScreener via Proxy
+                data = await fetchDexScreenerOHLC(currChainId, pairAddress, selectedTimeframe);
+            } else {
+                // Fetch from CoinGecko
+                data = await fetchOHLCData(coinId, days);
+            }
 
             if (candleSeriesRef.current && data.length > 0) {
                 candleDataRef.current = data;

@@ -1,6 +1,9 @@
 import axios from 'axios';
 
 const COINGECKO_API_BASE = 'https://api.coingecko.com/api/v3';
+// Use the NestJS backend API to proxy external requests (avoids CORS issues)
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const PROXY_BASE = `${API_BASE}/api/proxy`;
 
 export interface OHLCData {
     time: number;
@@ -20,6 +23,10 @@ const COIN_ID_MAP: Record<string, string> = {
     'btc': 'bitcoin',
     'eth': 'ethereum',
     'sol': 'solana',
+    'pepe': 'pepe',
+    'bonk': 'bonk',
+    'wif': 'dogwifhat',
+    'brett': 'brett-based',
 };
 
 /**
@@ -51,6 +58,64 @@ export async function fetchOHLCData(coinId: string, days: number = 30): Promise<
         return data;
     } catch (error) {
         console.error('[ChartData] Failed to fetch OHLC:', error);
+        throw error;
+    }
+}
+
+/**
+ * Fetches OHLC data for DexScreener pairs via our backend proxy
+ */
+export async function fetchDexScreenerOHLC(chainId: string, pairAddress: string, timeframe: string): Promise<OHLCData[]> {
+    console.log(`[ChartData] Fetching DexScreener bars for ${chainId}/${pairAddress} (${timeframe})...`);
+
+    // Map timeframe to resolution string
+    // 1, 5, 15, 60, 240, 1D
+    const resMap: Record<string, string> = {
+        '1m': '1',
+        '5m': '5',
+        '15m': '15',
+        '1h': '60',
+        '4h': '240',
+        '1d': '1D',
+    };
+    const res = resMap[timeframe] || '60';
+
+    try {
+        // Calculate timestamps
+        const now = Date.now();
+        // DexScreener seems to limit amount of bars, so we request based on timeframe
+        // For 1m/5m, request 24h. For larger, request more.
+        const days = timeframe === '1m' || timeframe === '5m' ? 1 :
+            timeframe === '15m' || timeframe === '1h' ? 7 : 30;
+
+        const from = now - (days * 24 * 60 * 60 * 1000);
+        const to = now;
+
+        // Determine Dex ID (usually matches chainId but sometimes different specific to DexScreener internals)
+        // For now, assume chainId works as dexId (e.g. 'ethereum', 'solana', 'base')
+        const dexId = chainId;
+
+        const url = `${PROXY_BASE}/dexscreener/bars/${dexId}/${chainId}/${pairAddress}?from=${from}&to=${to}&res=${res}&cb=${2}`; // cb param seems optional/random
+
+        const response = await axios.get<{ schemaVersion: string; bars: { timestamp: number; open: string; high: string; low: string; close: string; volume: string }[] }>(url);
+
+        if (!response.data.bars) return [];
+
+        const data: OHLCData[] = response.data.bars.map(bar => ({
+            time: Math.floor(bar.timestamp / 1000),
+            open: parseFloat(bar.open),
+            high: parseFloat(bar.high),
+            low: parseFloat(bar.low),
+            close: parseFloat(bar.close),
+        }));
+
+        // Sort by time
+        data.sort((a, b) => a.time - b.time);
+
+        console.log(`[ChartData] Loaded ${data.length} DexScreener bars`);
+        return data;
+    } catch (error) {
+        console.error('[ChartData] Failed to fetch DexScreener bars:', error);
         throw error;
     }
 }

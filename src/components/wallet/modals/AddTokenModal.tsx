@@ -55,8 +55,9 @@ const AddTokenModal: React.FC<AddTokenModalProps> = ({ isOpen, onClose }) => {
             // Mix in the user-selected network and contract address
             const enrichedToken: MarketCoin = {
                 ...foundToken,
-                chainId: selectedNetwork,
-                pairAddress: contractAddress, // Storing contract address here for now
+                // Use found chainId/pairAddress if available, otherwise fallback
+                chainId: foundToken.chainId || selectedNetwork,
+                pairAddress: foundToken.pairAddress || contractAddress,
                 id: foundToken.id || contractAddress // Ensure ID exists
             };
             addCustomToken(enrichedToken);

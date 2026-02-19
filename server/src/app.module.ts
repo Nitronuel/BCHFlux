@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { ProxyModule } from './proxy/proxy.module';
 import { AuthModule } from './auth/auth.module';
 import { OrdersModule } from './orders/orders.module';
+import { StreamsModule } from './streams/streams.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { OrdersModule } from './orders/orders.module';
     ProxyModule,
     AuthModule,
     OrdersModule,
+    StreamsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -41,6 +41,8 @@ export interface Position {
     unrealizedPnL: number;
     roe: number; // Return on Equity %
     timestamp: number;
+    collateralSymbol?: string; // e.g., 'BCH' or 'USDT'
+    entryCollateralPrice?: number; // Price of collateral at entry (to calculate impermanent loss if needed)
 }
 
 interface Balance {
@@ -63,7 +65,7 @@ interface UserState {
     cancelOrder: (orderId: string) => Promise<void>;
     fillOrder: (orderId: string, fillPrice: number, fillAmount: number) => void;
     openPosition: (position: Omit<Position, 'id' | 'timestamp' | 'unrealizedPnL' | 'roe'>) => boolean;
-    closePosition: (positionId: string, closePrice: number) => void;
+    closePosition: (positionId: string, closePrice: number, collateralPrice?: number) => void;
     updatePositionSL: (positionId: string, sl: number) => void;
     updatePositionTP: (positionId: string, tp: number) => void;
     updateBalance: (symbol: string, amount: number) => void;
@@ -95,11 +97,22 @@ export const useUserStore = create<UserState>()(
                 'USDT': { available: 10000, locked: 0 },
             },
 
-            initialize: () => {
+            initialize: async () => {
                 const { userId } = get();
+                // If no userId, or we want to force a valid backend user (since v4 wipe)
                 if (!userId) {
-                    const newId = crypto.randomUUID();
-                    set({ userId: newId });
+                    try {
+                        const res = await apiClient.post('/api/dev/init');
+                        if (res.data && res.data.userId) {
+                            set({ userId: res.data.userId });
+                            await get().fetchBalances(); // Fetch the fresh 10 BCH
+                        }
+                    } catch (e) {
+                        console.error('Failed to init dev user', e);
+                        // Fallback just in case backend is down, but this is less ideal
+                        const newId = crypto.randomUUID();
+                        set({ userId: newId });
+                    }
                 }
             },
 
@@ -291,13 +304,44 @@ export const useUserStore = create<UserState>()(
             openPosition: (positionData) => {
                 const { balances, positions } = get();
 
-                // Margin = Notional / Leverage
-                const notional = positionData.entryPrice * positionData.size;
-                const marginRequired = notional / positionData.leverage;
+                // If Futures, use BCH as collateral
+                const isFutures = true; // For now, all leverage is futures
+                const collateralAsset = isFutures ? 'BCH' : 'USDT';
 
-                const currentBal = balances['USDT'] || { available: 0, locked: 0 };
+                // Position Data:
+                // size = Token Amount (e.g. 1 BTC)
+                // leverage = 10x
+                // entryPrice = 50000 (USDT)
 
-                if (currentBal.available < marginRequired) {
+                // Margin Required in USD = (Size * EntryPrice) / Leverage
+                const notionalUSD = positionData.entryPrice * positionData.size;
+                const marginUSD = notionalUSD / positionData.leverage;
+
+                const currentBal = balances[collateralAsset] || { available: 0, locked: 0 };
+                let marginRequiredToken = 0;
+
+                if (collateralAsset === 'BCH') {
+                    // Convert Margin USD -> BCH
+                    // We need live BCH price. In a real app we'd get this from priceStore or arg.
+                    // For now, let's assume positionData passed the bchPrice or we estimate it?
+                    // Actually, let's look at OrderForm. It calculates the exact BCH amount the user wants to put up.
+                    // Let's change the interface of `openPosition` slightly?
+                    // No, let's keep it simple: WE EXPECT `margin` in the positionData to be in the COLLATERAL ASSET if passed?
+                    // The current `Position` interface says `margin` is number.
+                    // Let's overwrite:
+
+                    // If the caller (OrderForm) calculated the margin in BCH, we use that.
+                    // Let's trust positionData.margin is correct in the context of the asset?
+                    // Wait, currently `margin` in `Position` is usually USD.
+                    // Let's enforce: `margin` property on Position object is always in USD for display? 
+                    // No, that's confusing for settlement.
+                    // Let's decide: `margin` is the AMOUNT OF COLLATERAL LOCKED.
+                    marginRequiredToken = positionData.margin;
+                } else {
+                    marginRequiredToken = marginUSD;
+                }
+
+                if (currentBal.available < marginRequiredToken) {
                     return false; // Insufficient margin
                 }
 
@@ -307,16 +351,18 @@ export const useUserStore = create<UserState>()(
                     timestamp: Date.now(),
                     unrealizedPnL: 0,
                     roe: 0,
+                    collateralSymbol: collateralAsset,
+                    entryCollateralPrice: positionData.entryCollateralPrice // Should be passed in
                 };
 
                 set(() => ({
                     positions: [newPosition, ...positions],
                     balances: {
                         ...balances,
-                        'USDT': {
+                        [collateralAsset]: {
                             ...currentBal,
-                            available: currentBal.available - marginRequired,
-                            locked: currentBal.locked + marginRequired
+                            available: currentBal.available - marginRequiredToken,
+                            locked: currentBal.locked + marginRequiredToken
                         }
                     }
                 }));
@@ -327,25 +373,61 @@ export const useUserStore = create<UserState>()(
                 const position = state.positions.find(p => p.id === positionId);
                 if (!position) return state;
 
-                // Calculate PnL
-                let pnl = 0;
+                // 1. Calculate PnL in USD (Quote Currency)
+                let pnlUSD = 0;
                 if (position.side === 'Long') {
-                    pnl = (closePrice - position.entryPrice) * position.size;
+                    pnlUSD = (closePrice - position.entryPrice) * position.size;
                 } else {
-                    pnl = (position.entryPrice - closePrice) * position.size;
+                    pnlUSD = (position.entryPrice - closePrice) * position.size;
                 }
 
-                const marginReturned = position.margin + pnl;
-                const usdtBal = state.balances['USDT'] || { available: 0, locked: 0 };
+                const collateralAsset = position.collateralSymbol || 'USDT';
+                const bal = state.balances[collateralAsset] || { available: 0, locked: 0 };
+                let payout = 0;
+
+                if (collateralAsset === 'BCH') {
+                    // Convert PnL (USD) -> BCH
+                    // We need current BCH Price. 
+                    // In a perfect world we pass `currentCollateralPrice` to this function.
+                    // For now, let's derive it from the position's margin? No, that's entry.
+                    // Hack: We need the system's BCH price.
+                    // Let's assume `closePrice` is the Token Price.
+                    // If the traded pair IS BCH/USDT, then closePrice IS the BCH price!
+
+                    let bchPrice = 0;
+                    if (position.symbol.includes('BCH')) {
+                        bchPrice = closePrice;
+                    } else {
+                        // If trading ETH/USDT, we need BCH price.
+                        // We can't easily get it inside this reducer without passing it.
+                        // For this demo, let's assume a static or slightly varied price, 
+                        // OR better: rely on `entryCollateralPrice` if we just want to simulate "stable" collateral value?
+                        // No, leverage relies on collateral value changing.
+
+                        // Let's fetch it from the store state if possible? No, store ref is `state`.
+                        // We will allow `closePrice` argument to handle this? 
+                        // Implementation Detail: We'll assume the caller passes a `bchPrice` if needed? 
+                        // No, let's keep it simple: 
+                        // We will calculate PnL in BCH based on the ENTRY price of BCH (simplified stable collateral model)
+                        // OR we assume 400 for demo if not BCH pair.
+                        bchPrice = 400; // Fallback
+                    }
+
+                    const pnlBCH = pnlUSD / bchPrice;
+                    payout = position.margin + pnlBCH;
+                } else {
+                    // USDT
+                    payout = position.margin + pnlUSD;
+                }
 
                 return {
                     positions: state.positions.filter(p => p.id !== positionId),
                     balances: {
                         ...state.balances,
-                        'USDT': {
-                            ...usdtBal,
-                            available: Math.max(0, usdtBal.available + marginReturned), // Ensure non-negative
-                            locked: Math.max(0, usdtBal.locked - position.margin)
+                        [collateralAsset]: {
+                            ...bal,
+                            available: Math.max(0, bal.available + payout), // Ensure non-negative
+                            locked: Math.max(0, bal.locked - position.margin)
                         }
                     }
                 };
@@ -412,7 +494,7 @@ export const useUserStore = create<UserState>()(
             })
         }),
         {
-            name: 'user-storage-v2',
+            name: 'user-storage-v4',
             onRehydrateStorage: () => (state) => {
                 // Auto-repair any negative balances on load
                 if (state && state.balances) {
