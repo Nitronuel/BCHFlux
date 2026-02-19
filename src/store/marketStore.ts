@@ -1,15 +1,12 @@
 import { create } from 'zustand';
 import { fetchCoinMetadata, type MarketCoin } from '../services/api';
-import { fetchDexScreenerTrends } from '../services/dexScreener';
+
 import { getCachedMarketData, setCachedMarketData, updateCachedPrices } from '../services/metadataCache';
 import { websocketService } from '../services/websocket';
 
-// Default coins to track - BCH first as requested
+// Default coins to track - BCH only as requested
 const DEFAULT_COINS = [
     'bitcoin-cash',
-    'bitcoin',
-    'ethereum',
-    'solana',
 ];
 
 interface MarketState {
@@ -50,27 +47,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
             const marketOrder: string[] = JSON.parse(localStorage.getItem('market_order') || '[]');
             const hiddenTokens: string[] = JSON.parse(localStorage.getItem('hidden_tokens') || '[]');
 
-            // --- DEV: Inject Test Solana Token (Popcat) if not present ---
-            const testTokenId = 'popcat-sol';
-            if (!customTokens.some(t => t.id === testTokenId)) {
-                const popcatToken: MarketCoin = {
-                    id: testTokenId,
-                    symbol: 'popcat',
-                    name: 'Popcat (SOL)',
-                    image: 'https://assets.coingecko.com/coins/images/33739/standard/popcat.png?1702958288',
-                    current_price: 0.45, // Mock start price
-                    price_change_percentage_24h: 12.5,
-                    high_24h: 0.50,
-                    low_24h: 0.40,
-                    total_volume: 5000000,
-                    market_cap: 450000000,
-                    chainId: 'solana',
-                    pairAddress: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr'
-                };
-                customTokens.push(popcatToken);
-                localStorage.setItem('custom_tokens', JSON.stringify(customTokens));
-                console.log('[MarketStore] Injected Test Token: Popcat (SOL)');
-            }
+
 
             // Step 1: Check cache for full market data
             const cachedData = getCachedMarketData();
@@ -85,19 +62,13 @@ export const useMarketStore = create<MarketState>((set, get) => ({
                 // Cache miss - fetch from CoinGecko (only happens once per 24h or on first load)
                 console.log('[MarketStore] Cache miss, fetching from CoinGecko & DexScreener...');
 
-                // Fetch Core Coins (CoinGecko) and Trending (DexScreener) in parallel
-                const [coreData, trendData] = await Promise.all([
-                    fetchCoinMetadata(DEFAULT_COINS),
-                    fetchDexScreenerTrends()
-                ]);
-
-                // Merge: Core first, then Trends
-                const mergedData = [...coreData, ...trendData];
+                // Fetch Core Coins (CoinGecko) only
+                const coreData = await fetchCoinMetadata(DEFAULT_COINS);
 
                 // Cache the full market data
-                setCachedMarketData(mergedData);
+                setCachedMarketData(coreData);
 
-                markets = mergedData;
+                markets = coreData;
             }
 
             // Filter out hidden tokens
