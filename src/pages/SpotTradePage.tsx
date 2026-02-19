@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { CandlestickChart, ArrowDown, ArrowUp } from 'lucide-react';
+import { CandlestickChart } from 'lucide-react';
 
 import MarketSelector from '../components/trading/header/MarketSelector';
 import TradingViewChart from '../components/trading/TradingViewChart';
 import OrderForm from '../components/trading/forms/OrderForm';
 import UserTabs from '../components/trading/UserTabs';
-import DepositModal from '../components/wallet/modals/DepositModal';
-import WithdrawModal from '../components/wallet/modals/WithdrawModal';
 import { useMarketStore } from '../store/marketStore';
 import { useUserStore } from '../store/userStore';
 
@@ -22,10 +20,6 @@ const SpotTradePage: React.FC = () => {
     const { pair = 'BCHUSDT' } = useParams();
     const navigate = useNavigate();
     const [isChartVisible, setIsChartVisible] = useState(false);
-
-    // Modal State
-    const [activeModal, setActiveModal] = useState<'deposit' | 'withdraw' | null>(null);
-    const [selectedTokenForAction, setSelectedTokenForAction] = useState<{ symbol: string; name: string } | null>(null);
 
     const { markets, initializeMarkets } = useMarketStore();
     const { balances } = useUserStore();
@@ -43,7 +37,6 @@ const SpotTradePage: React.FC = () => {
 
     const currentMarket = markets.find(m => m.symbol.toLowerCase() === symbol);
     const coinId = currentMarket?.id || 'bitcoin-cash';
-    const coinName = currentMarket?.name || baseSymbol;
 
     const price = currentMarket?.current_price ?? 0;
     const change = currentMarket?.price_change_percentage_24h ?? 0;
@@ -54,27 +47,6 @@ const SpotTradePage: React.FC = () => {
 
     const handleSelectPair = (newPair: string) => {
         navigate(`/trade/spot/${newPair}`);
-    };
-
-    const openModal = (type: 'deposit' | 'withdraw', tokenSymbol: string, tokenName: string) => {
-        setSelectedTokenForAction({ symbol: tokenSymbol, name: tokenName });
-        setActiveModal(type);
-    };
-
-    const closeModal = () => {
-        setActiveModal(null);
-        setSelectedTokenForAction(null);
-    };
-
-    const getAvailableBalance = (symbol: string): number => {
-        const bal = balances[symbol];
-        if (typeof bal === 'object' && bal !== null && 'available' in bal) {
-            return bal.available;
-        }
-        if (typeof bal === 'number') {
-            return bal;
-        }
-        return 0;
     };
 
     return (
@@ -212,27 +184,6 @@ const SpotTradePage: React.FC = () => {
                     </div>
                 </div>
             </div>
-
-            {/* Modals */}
-            {selectedTokenForAction && (
-                <>
-                    <DepositModal
-                        isOpen={activeModal === 'deposit'}
-                        onClose={closeModal}
-                        tokenName={selectedTokenForAction.name}
-                        tokenSymbol={selectedTokenForAction.symbol}
-                        network="Ethereum"
-                    />
-                    <WithdrawModal
-                        isOpen={activeModal === 'withdraw'}
-                        onClose={closeModal}
-                        tokenName={selectedTokenForAction.name}
-                        tokenSymbol={selectedTokenForAction.symbol}
-                        network="Ethereum"
-                        availableBalance={getAvailableBalance(selectedTokenForAction.symbol)}
-                    />
-                </>
-            )}
         </div>
     );
 };
