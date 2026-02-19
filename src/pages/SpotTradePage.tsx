@@ -196,45 +196,17 @@ const SpotTradePage: React.FC = () => {
 
                         {/* Quote Asset */}
                         <div className="mb-4">
-                            <div className="flex justify-between items-center mb-2">
+                            <div className="flex justify-between items-center">
                                 <span className="font-medium text-text-secondary">{quoteSymbol}</span>
                                 <span className="font-bold text-text-primary">{(typeof balances[quoteSymbol] === 'object' ? balances[quoteSymbol]?.available || 0 : balances[quoteSymbol] || 0).toLocaleString()}</span>
-                            </div>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={() => openModal('deposit', quoteSymbol, 'Tether')}
-                                    className="flex-1 py-1.5 flex items-center justify-center gap-1 bg-surface border border-border rounded text-xs font-medium hover:bg-hover transition-colors"
-                                >
-                                    <ArrowDown className="w-3 h-3" /> Deposit
-                                </button>
-                                <button
-                                    onClick={() => openModal('withdraw', quoteSymbol, 'Tether')}
-                                    className="flex-1 py-1.5 flex items-center justify-center gap-1 bg-surface border border-border rounded text-xs font-medium hover:bg-hover transition-colors"
-                                >
-                                    <ArrowUp className="w-3 h-3" /> Withdraw
-                                </button>
                             </div>
                         </div>
 
                         {/* Base Asset */}
                         <div>
-                            <div className="flex justify-between items-center mb-2">
+                            <div className="flex justify-between items-center">
                                 <span className="font-medium text-text-secondary">{baseSymbol}</span>
                                 <span className="font-bold text-text-primary">{(typeof balances[baseSymbol] === 'object' ? balances[baseSymbol]?.available || 0 : balances[baseSymbol] || 0).toLocaleString()}</span>
-                            </div>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={() => openModal('deposit', baseSymbol, coinName)}
-                                    className="flex-1 py-1.5 flex items-center justify-center gap-1 bg-surface border border-border rounded text-xs font-medium hover:bg-hover transition-colors"
-                                >
-                                    <ArrowDown className="w-3 h-3" /> Deposit
-                                </button>
-                                <button
-                                    onClick={() => openModal('withdraw', baseSymbol, coinName)}
-                                    className="flex-1 py-1.5 flex items-center justify-center gap-1 bg-surface border border-border rounded text-xs font-medium hover:bg-hover transition-colors"
-                                >
-                                    <ArrowUp className="w-3 h-3" /> Withdraw
-                                </button>
                             </div>
                         </div>
                     </div>
