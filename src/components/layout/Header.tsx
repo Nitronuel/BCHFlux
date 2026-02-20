@@ -7,7 +7,8 @@ import ConnectWalletModal from '../wallet/ConnectWalletModal';
 
 const Header: React.FC = () => {
     const location = useLocation();
-    const { isDemoMode, toggleDemoMode } = useUserStore();
+    // @ts-ignore - Store kept for future demo mode toggle
+    const _userStore = useUserStore();
     const { isConnected, address, balance, disconnect } = useWalletStore();
     const [isConnectOpen, setIsConnectOpen] = useState(false);
     const [isLoggedIn] = useState(true); // Mock login state

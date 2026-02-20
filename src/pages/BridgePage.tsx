@@ -198,7 +198,7 @@ const BridgePage: React.FC = () => {
 
                         {/* Action Button */}
                         <button
-                            onClick={quote ? handleSwap : handleGetQuote}
+                            onClick={quote ? handleSwap : () => handleGetQuote()}
                             disabled={loading || !isConnected}
                             className={`w-full mt-4 py-4 rounded-xl font-bold text-lg transition-all transform hover:scale-[1.02] active:scale-[0.98]
                                 ${!isConnected

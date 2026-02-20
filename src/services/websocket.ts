@@ -24,7 +24,8 @@ const SYMBOL_TO_ID = Object.entries(ID_TO_SYMBOL).reduce((acc, [id, symbol]) => 
 
 class WebSocketService {
     private binanceWs: WebSocket | null = null;
-    private coincapWs: WebSocket | null = null;
+    // @ts-ignore Reserved for CoinCap integration
+    private _coincapWs: WebSocket | null = null;
 
     private callbacks: PriceCallback[] = [];
     private isConnecting = false;

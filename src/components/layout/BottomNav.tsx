@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart2, ArrowLeftRight, TrendingUp, Wallet, Banknote } from 'lucide-react';
+import { BarChart2, ArrowLeftRight, TrendingUp, Wallet } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 const BottomNav: React.FC = () => {
