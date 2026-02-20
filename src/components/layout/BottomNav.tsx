@@ -15,7 +15,7 @@ const BottomNav: React.FC = () => {
         { name: 'Trade', path: '/trade/spot/BTCUSDT', icon: ArrowLeftRight },
         { name: 'Leverage', path: '/leverage/BTCUSDT', icon: TrendingUp },
         { name: 'Wallets', path: '/wallet', icon: Wallet },
-        { name: 'Payroll', path: '/payroll', icon: Banknote },
+        { name: 'Bridge', path: '/bridge', icon: ArrowLeftRight },
     ];
 
     return (
