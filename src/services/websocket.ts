@@ -1,93 +1,119 @@
-// Hybrid WebSocket Service: Binance (Fastest for Majors) + CoinCap (Fallback for others)
-// Binance WS is standard for high-frequency trading of major assets.
+// Price Polling Service: CoinGecko (Majors) + DexScreener (Custom Tokens)
+// Replaces Binance WebSocket which is blocked in some regions (e.g. Nigeria)
+
+import axios from 'axios';
 
 type PriceCallback = (coinId: string, price: number, change24h: number) => void;
 
-// Map CoinGecko IDs (used in our app) to Binance Symbols
-const ID_TO_SYMBOL: Record<string, string> = {
-    'bitcoin-cash': 'bchusdt',
-    'bitcoin': 'btcusdt',
-    'ethereum': 'ethusdt',
-    'solana': 'solusdt',
-    'ripple': 'xrpusdt',
-    'dogecoin': 'dogeusdt',
-    'cardano': 'adausdt',
-    'polkadot': 'dotusdt',
-    'chainlink': 'linkusdt',
-    'litecoin': 'ltcusdt'
-};
+// CoinGecko coin IDs we track for major assets
+const TRACKED_COINS = [
+    'bitcoin-cash',
+    'bitcoin',
+    'ethereum',
+    'solana',
+    'ripple',
+    'dogecoin',
+    'cardano',
+    'polkadot',
+    'chainlink',
+    'litecoin',
+    'tether',
+    'binancecoin',
+];
 
-const SYMBOL_TO_ID = Object.entries(ID_TO_SYMBOL).reduce((acc, [id, symbol]) => {
-    acc[symbol] = id;
-    return acc;
-}, {} as Record<string, string>);
+const COINGECKO_API = 'https://api.coingecko.com/api/v3';
+const COINGECKO_POLL_INTERVAL = 10000;  // 10 seconds
+const DEXSCREENER_POLL_INTERVAL = 15000; // 15 seconds
 
-class WebSocketService {
-    private binanceWs: WebSocket | null = null;
-    // @ts-ignore Reserved for CoinCap integration
-    private _coincapWs: WebSocket | null = null;
-
+class PricePollingService {
     private callbacks: PriceCallback[] = [];
-    private isConnecting = false;
+    private coinGeckoTimer: ReturnType<typeof setInterval> | null = null;
+    private dexScreenerTimer: ReturnType<typeof setInterval> | null = null;
+    private isRunning = false;
 
-    // Assets to track on CoinCap (as backup or for non-Binance assets)
-    // We'll dynamically update this list based on what the user tracks?
-    // For now, let's keep it simple: CoinCap tracks everything else if we needed it.
-    // But honestly, for PumpFun/Meme coins, neither Binance nor CoinCap usually has them instantly.
-    // They appear on DexScreener.
-    // Optimized Strategy: 
-    // 1. Binance for Majors.
-    // 2. CoinCap for mid-caps.
-    // 3. App treats "Custom Tokens" via polling DexScreener (in marketStore/api).
+    // Custom tokens tracked via DexScreener (chainId + pairAddress)
+    private customTokens: Map<string, { chainId: string; pairAddress: string }> = new Map();
 
     connect() {
-        if (this.isConnecting) return;
-        this.isConnecting = true;
+        if (this.isRunning) return;
+        this.isRunning = true;
 
-        this.connectBinance();
-        // this.connectCoinCap(); // Optional: Enable if we want mid-cap coverage via WS
+        console.log('[PriceService] Starting CoinGecko + DexScreener polling...');
+
+        // Initial fetch
+        this.fetchCoinGeckoPrices();
+        this.fetchDexScreenerPrices();
+
+        // Set up polling intervals
+        this.coinGeckoTimer = setInterval(() => {
+            this.fetchCoinGeckoPrices();
+        }, COINGECKO_POLL_INTERVAL);
+
+        this.dexScreenerTimer = setInterval(() => {
+            this.fetchDexScreenerPrices();
+        }, DEXSCREENER_POLL_INTERVAL);
     }
 
-    private connectBinance() {
-        const symbols = Object.values(ID_TO_SYMBOL).map(s => `${s}@trade`).join('/');
-        const wsUrl = `wss://stream.binance.com:9443/ws/${symbols}`;
-
-        console.log('[WebSocket] Connecting to Binance Stream...');
-
+    private async fetchCoinGeckoPrices() {
         try {
-            this.binanceWs = new WebSocket(wsUrl);
+            const ids = TRACKED_COINS.join(',');
+            const url = `${COINGECKO_API}/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
+            const response = await axios.get(url);
+            const data = response.data;
 
-            this.binanceWs.onopen = () => {
-                console.log('[WebSocket] ✅ Connected to Binance!');
-                this.isConnecting = false;
-            };
-
-            this.binanceWs.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                // Binance Trade Stream: { e: 'trade', s: 'BCHUSDT', p: '245.50', ... }
-                // Stream name format in combined stream: data.stream matches
-                // But raw payload `data` has `s` for symbol.
-
-                const symbol = data.s?.toLowerCase();
-                const price = parseFloat(data.p);
-
-                if (symbol && SYMBOL_TO_ID[symbol] && !isNaN(price)) {
-                    const coinId = SYMBOL_TO_ID[symbol];
-                    // Binance doesn't send "24h change" in trade stream, only current price.
-                    // We pass 0 for change, store handles it (keeps existing change %).
-                    this.notify(coinId, price, 0);
+            // Notify subscribers for each coin
+            for (const coinId of TRACKED_COINS) {
+                if (data[coinId]) {
+                    const price = data[coinId].usd;
+                    const change24h = data[coinId].usd_24h_change || 0;
+                    this.notify(coinId, price, change24h);
                 }
-            };
-
-            this.binanceWs.onerror = (err) => console.error('[WebSocket] Binance Error:', err);
-            this.binanceWs.onclose = () => {
-                console.log('[WebSocket] Binance Closed. Reconnecting...');
-                setTimeout(() => this.connectBinance(), 3000);
-            };
-
+            }
         } catch (err) {
-            console.error('Failed to connect Binance:', err);
+            // Silent fail — don't spam console on rate limits
+            if (axios.isAxiosError(err) && err.response?.status === 429) {
+                console.warn('[PriceService] CoinGecko rate limited, will retry next interval');
+            } else {
+                console.warn('[PriceService] CoinGecko fetch failed:', (err as Error).message);
+            }
         }
+    }
+
+    private async fetchDexScreenerPrices() {
+        if (this.customTokens.size === 0) return;
+
+        for (const [coinId, { chainId, pairAddress }] of this.customTokens) {
+            try {
+                const url = `https://api.dexscreener.com/latest/dex/pairs/${chainId}/${pairAddress}`;
+                const response = await axios.get(url);
+                const pair = response.data?.pair || response.data?.pairs?.[0];
+
+                if (pair) {
+                    const price = parseFloat(pair.priceUsd || '0');
+                    const change24h = pair.priceChange?.h24 || 0;
+                    if (price > 0) {
+                        this.notify(coinId, price, change24h);
+                    }
+                }
+            } catch (err) {
+                console.warn(`[PriceService] DexScreener fetch failed for ${coinId}:`, (err as Error).message);
+            }
+        }
+    }
+
+    /**
+     * Register a custom token to track via DexScreener
+     */
+    trackCustomToken(coinId: string, chainId: string, pairAddress: string) {
+        this.customTokens.set(coinId, { chainId, pairAddress });
+        console.log(`[PriceService] Tracking custom token: ${coinId} (${chainId}/${pairAddress})`);
+    }
+
+    /**
+     * Remove a custom token from tracking
+     */
+    untrackCustomToken(coinId: string) {
+        this.customTokens.delete(coinId);
     }
 
     private notify(coinId: string, price: number, change24h: number) {
@@ -101,11 +127,22 @@ class WebSocketService {
         }
         return () => {
             this.callbacks = this.callbacks.filter(cb => cb !== callback);
+            // Stop polling if no subscribers
+            if (this.callbacks.length === 0) {
+                this.disconnect();
+            }
         };
+    }
+
+    private disconnect() {
+        if (this.coinGeckoTimer) clearInterval(this.coinGeckoTimer);
+        if (this.dexScreenerTimer) clearInterval(this.dexScreenerTimer);
+        this.coinGeckoTimer = null;
+        this.dexScreenerTimer = null;
+        this.isRunning = false;
+        console.log('[PriceService] Stopped polling.');
     }
 }
 
-export const websocketService = new WebSocketService();
-if (typeof window !== 'undefined') {
-    (window as unknown as Record<string, unknown>).wsDebug = () => console.log('WebSocket Service Active');
-}
+// Export with the SAME name so existing imports don't break
+export const websocketService = new PricePollingService();

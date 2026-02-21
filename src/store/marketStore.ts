@@ -157,6 +157,11 @@ export const useMarketStore = create<MarketState>((set, get) => ({
         const updatedMarkets = [...markets, token];
         set({ markets: updatedMarkets });
 
+        // Register with DexScreener tracking if pair data available
+        if (token.chainId && token.pairAddress) {
+            websocketService.trackCustomToken(token.id, token.chainId, token.pairAddress);
+        }
+
         // Persist Custom Token
         const customTokens: MarketCoin[] = JSON.parse(localStorage.getItem('custom_tokens') || '[]');
         if (!customTokens.some(t => t.id === token.id)) {
@@ -253,10 +258,19 @@ export const useMarketStore = create<MarketState>((set, get) => ({
     },
 
     /**
-     * Start WebSocket subscription for live price updates
+     * Start polling subscription for live price updates (CoinGecko + DexScreener)
      */
     startLiveUpdates: () => {
-        console.log('[MarketStore] Starting live price updates...');
+        console.log('[MarketStore] Starting live price updates (CoinGecko + DexScreener)...');
+
+        // Register existing custom tokens for DexScreener tracking
+        const { markets } = get();
+        markets.forEach(m => {
+            if (m.chainId && m.pairAddress) {
+                websocketService.trackCustomToken(m.id, m.chainId, m.pairAddress);
+            }
+        });
+
         const unsubscribe = websocketService.subscribe((coinId, price) => {
             get().updateMarketPrice(coinId, price);
         });
