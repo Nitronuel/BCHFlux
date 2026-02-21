@@ -94,8 +94,11 @@ const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({ isOpen, onClose
     };
 
     const handleBackToOptions = () => {
+        // Clean up stale pairing so a fresh QR can be generated next time
+        walletConnectService.cancelPending();
         setShowQR(false);
         setWcUri(null);
+        setError(null);
     };
 
     return (
