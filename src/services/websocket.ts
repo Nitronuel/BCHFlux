@@ -1,5 +1,5 @@
-// Price Polling Service: CoinGecko (Majors) + DexScreener (Custom Tokens)
-// Replaces Binance WebSocket which is blocked in some regions (e.g. Nigeria)
+// Price Polling Service: Backend Proxy → CoinGecko (Majors) + DexScreener (Custom Tokens)
+// All API calls go through the NestJS backend to avoid CORS issues and rate limiting
 
 import axios from 'axios';
 
@@ -21,8 +21,9 @@ const TRACKED_COINS = [
     'binancecoin',
 ];
 
-const COINGECKO_API = 'https://api.coingecko.com/api/v3';
-const COINGECKO_POLL_INTERVAL = 10000;  // 10 seconds
+// Backend proxy base URL
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const COINGECKO_POLL_INTERVAL = 15000;  // 15 seconds (avoid CoinGecko rate limits)
 const DEXSCREENER_POLL_INTERVAL = 15000; // 15 seconds
 
 class PricePollingService {
@@ -38,7 +39,7 @@ class PricePollingService {
         if (this.isRunning) return;
         this.isRunning = true;
 
-        console.log('[PriceService] Starting CoinGecko + DexScreener polling...');
+        console.log('[PriceService] Starting price polling via backend proxy...');
 
         // Initial fetch
         this.fetchCoinGeckoPrices();
@@ -56,8 +57,9 @@ class PricePollingService {
 
     private async fetchCoinGeckoPrices() {
         try {
+            // Route through backend proxy to avoid CORS
             const ids = TRACKED_COINS.join(',');
-            const url = `${COINGECKO_API}/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
+            const url = `${API_BASE}/api/proxy/coingecko/prices?ids=${ids}&vs_currency=usd`;
             const response = await axios.get(url);
             const data = response.data;
 
@@ -70,12 +72,8 @@ class PricePollingService {
                 }
             }
         } catch (err) {
-            // Silent fail — don't spam console on rate limits
-            if (axios.isAxiosError(err) && err.response?.status === 429) {
-                console.warn('[PriceService] CoinGecko rate limited, will retry next interval');
-            } else {
-                console.warn('[PriceService] CoinGecko fetch failed:', (err as Error).message);
-            }
+            // Silent fail — don't spam console
+            console.warn('[PriceService] Price fetch failed:', (err as Error).message);
         }
     }
 
@@ -84,7 +82,8 @@ class PricePollingService {
 
         for (const [coinId, { chainId, pairAddress }] of this.customTokens) {
             try {
-                const url = `https://api.dexscreener.com/latest/dex/pairs/${chainId}/${pairAddress}`;
+                // Route through backend proxy to avoid CORS
+                const url = `${API_BASE}/api/proxy/dexscreener/pairs/${chainId}/${pairAddress}`;
                 const response = await axios.get(url);
                 const pair = response.data?.pair || response.data?.pairs?.[0];
 
@@ -127,7 +126,6 @@ class PricePollingService {
         }
         return () => {
             this.callbacks = this.callbacks.filter(cb => cb !== callback);
-            // Stop polling if no subscribers
             if (this.callbacks.length === 0) {
                 this.disconnect();
             }
