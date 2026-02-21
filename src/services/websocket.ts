@@ -23,14 +23,16 @@ const TRACKED_COINS = [
 
 // Backend proxy base URL
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-const COINGECKO_POLL_INTERVAL = 15000;  // 15 seconds (avoid CoinGecko rate limits)
-const DEXSCREENER_POLL_INTERVAL = 15000; // 15 seconds
+const BASE_POLL_INTERVAL = 15000;     // 15 seconds normal
+const MAX_POLL_INTERVAL = 120000;     // 2 minutes max backoff
+const DEXSCREENER_POLL_INTERVAL = 15000;
 
 class PricePollingService {
     private callbacks: PriceCallback[] = [];
-    private coinGeckoTimer: ReturnType<typeof setInterval> | null = null;
+    private coinGeckoTimer: ReturnType<typeof setTimeout> | null = null;
     private dexScreenerTimer: ReturnType<typeof setInterval> | null = null;
     private isRunning = false;
+    private consecutiveFailures = 0;
 
     // Custom tokens tracked via DexScreener (chainId + pairAddress)
     private customTokens: Map<string, { chainId: string; pairAddress: string }> = new Map();
@@ -38,30 +40,50 @@ class PricePollingService {
     connect() {
         if (this.isRunning) return;
         this.isRunning = true;
+        this.consecutiveFailures = 0;
 
         console.log('[PriceService] Starting price polling via backend proxy...');
 
         // Initial fetch
-        this.fetchCoinGeckoPrices();
+        this.scheduleCoinGeckoPoll(0);
+
+        // DexScreener on fixed interval
         this.fetchDexScreenerPrices();
-
-        // Set up polling intervals
-        this.coinGeckoTimer = setInterval(() => {
-            this.fetchCoinGeckoPrices();
-        }, COINGECKO_POLL_INTERVAL);
-
         this.dexScreenerTimer = setInterval(() => {
             this.fetchDexScreenerPrices();
         }, DEXSCREENER_POLL_INTERVAL);
     }
 
+    /**
+     * Schedule next CoinGecko poll with exponential backoff on failures
+     */
+    private scheduleCoinGeckoPoll(delayMs: number) {
+        if (!this.isRunning) return;
+
+        this.coinGeckoTimer = setTimeout(async () => {
+            await this.fetchCoinGeckoPrices();
+
+            // Calculate next interval with backoff
+            const nextInterval = this.consecutiveFailures > 0
+                ? Math.min(BASE_POLL_INTERVAL * Math.pow(2, this.consecutiveFailures), MAX_POLL_INTERVAL)
+                : BASE_POLL_INTERVAL;
+
+            this.scheduleCoinGeckoPoll(nextInterval);
+        }, delayMs);
+    }
+
     private async fetchCoinGeckoPrices() {
         try {
-            // Route through backend proxy to avoid CORS
             const ids = TRACKED_COINS.join(',');
             const url = `${API_BASE}/api/proxy/coingecko/prices?ids=${ids}&vs_currency=usd`;
-            const response = await axios.get(url);
+            const response = await axios.get(url, { timeout: 10000 });
             const data = response.data;
+
+            // Reset failure count on success
+            if (this.consecutiveFailures > 0) {
+                console.log('[PriceService] ✅ Price fetch recovered');
+            }
+            this.consecutiveFailures = 0;
 
             // Notify subscribers for each coin
             for (const coinId of TRACKED_COINS) {
@@ -72,8 +94,12 @@ class PricePollingService {
                 }
             }
         } catch (err) {
-            // Silent fail — don't spam console
-            console.warn('[PriceService] Price fetch failed:', (err as Error).message);
+            this.consecutiveFailures++;
+            // Only log first failure and then every 5th failure to reduce console spam
+            if (this.consecutiveFailures === 1 || this.consecutiveFailures % 5 === 0) {
+                const backoffSec = Math.min(BASE_POLL_INTERVAL * Math.pow(2, this.consecutiveFailures), MAX_POLL_INTERVAL) / 1000;
+                console.warn(`[PriceService] Price fetch failed (attempt ${this.consecutiveFailures}), next retry in ${backoffSec}s`);
+            }
         }
     }
 
@@ -82,9 +108,8 @@ class PricePollingService {
 
         for (const [coinId, { chainId, pairAddress }] of this.customTokens) {
             try {
-                // Route through backend proxy to avoid CORS
                 const url = `${API_BASE}/api/proxy/dexscreener/pairs/${chainId}/${pairAddress}`;
-                const response = await axios.get(url);
+                const response = await axios.get(url, { timeout: 10000 });
                 const pair = response.data?.pair || response.data?.pairs?.[0];
 
                 if (pair) {
@@ -94,8 +119,8 @@ class PricePollingService {
                         this.notify(coinId, price, change24h);
                     }
                 }
-            } catch (err) {
-                console.warn(`[PriceService] DexScreener fetch failed for ${coinId}:`, (err as Error).message);
+            } catch {
+                // Silent fail for individual DexScreener tokens
             }
         }
     }
@@ -133,11 +158,12 @@ class PricePollingService {
     }
 
     private disconnect() {
-        if (this.coinGeckoTimer) clearInterval(this.coinGeckoTimer);
+        if (this.coinGeckoTimer) clearTimeout(this.coinGeckoTimer);
         if (this.dexScreenerTimer) clearInterval(this.dexScreenerTimer);
         this.coinGeckoTimer = null;
         this.dexScreenerTimer = null;
         this.isRunning = false;
+        this.consecutiveFailures = 0;
         console.log('[PriceService] Stopped polling.');
     }
 }

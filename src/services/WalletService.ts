@@ -1,4 +1,5 @@
 import { TestNetWallet, Wallet } from 'mainnet-js';
+import { walletConnectService } from './walletConnectService';
 
 // Configure Mainnet-js to use REST API or specific electrum servers if needed
 // Config.EnforceCashToken = true; 
@@ -6,7 +7,8 @@ import { TestNetWallet, Wallet } from 'mainnet-js';
 export class WalletService {
     private static wallet: Wallet | TestNetWallet | null = null;
     // @ts-ignore
-    private static isTestnet = false; // Toggle for dev
+    private static isTestnet = false;
+    private static _connectionType: 'local' | 'walletconnect' | null = null;
 
     /**
      * Initialize a local internal wallet (Non-custodial, stored in browser)
@@ -72,6 +74,7 @@ export class WalletService {
             }
 
             this.wallet = wallet;
+            this._connectionType = 'local';
 
             // Fix: getAddress usage. 
             if (typeof (wallet as any).getAddress === 'function') {
@@ -118,6 +121,15 @@ export class WalletService {
         amountModels: { bch?: number, usd?: number },
         memo?: string
     ): Promise<string> {
+        // Route through WalletConnect if connected externally
+        if (this._connectionType === 'walletconnect') {
+            return walletConnectService.sendTransaction({
+                to,
+                value: amountModels.bch || 0,
+                memo,
+            });
+        }
+
         if (!this.wallet) throw new Error("Wallet not initialized");
 
         // Convert BCH to Satoshis manually to avoid "BigInt" errors with floats

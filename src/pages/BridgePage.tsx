@@ -38,7 +38,7 @@ const BridgePage: React.FC = () => {
         if (!amount || parseFloat(amount) <= 0) return;
         if (!isSilent) setLoading(true);
         try {
-            const res = await axios.post(`${import.meta.env.VITE_API_URL}/api/bridge/quote`, {
+            const res = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/bridge/quote`, {
                 amount: parseFloat(amount),
                 toToken,
                 toChain

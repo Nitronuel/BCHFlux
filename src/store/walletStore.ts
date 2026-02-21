@@ -8,11 +8,11 @@ interface WalletState {
         bch: number;
         usd: number;
     };
-    connectionType: 'mainnet' | 'local' | 'extension' | null;
+    connectionType: 'mainnet' | 'local' | 'extension' | 'walletconnect' | null;
     isConnecting: boolean;
 
     // Actions
-    setConnected: (address: string, type: 'mainnet' | 'local' | 'extension') => void;
+    setConnected: (address: string, type: 'mainnet' | 'local' | 'extension' | 'walletconnect') => void;
     setBalance: (bch: number, usd: number) => void;
     disconnect: () => void;
     setConnecting: (loading: boolean) => void;
