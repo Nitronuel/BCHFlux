@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ArrowDown, ArrowRight, History, Info } from 'lucide-react';
 import Layout from '../components/layout/Layout';
 import { useWalletStore } from '../store/walletStore';
@@ -33,11 +33,11 @@ const BridgePage: React.FC = () => {
         { symbol: 'BNB', chain: 'BSC', icon: 'https://cryptologos.cc/logos/bnb-bnb-logo.png', color: 'text-yellow-500' },
     ];
 
-    const handleGetQuote = async (isSilent = false) => {
+    // Fetch quote from backend
+    const fetchQuote = async (isSilent = false) => {
         if (!amount || parseFloat(amount) <= 0) return;
         if (!isSilent) setLoading(true);
         try {
-            // Call backend for quote
             const res = await axios.post(`${import.meta.env.VITE_API_URL}/api/bridge/quote`, {
                 amount: parseFloat(amount),
                 toToken,
@@ -52,26 +52,32 @@ const BridgePage: React.FC = () => {
         }
     };
 
-    // Auto-poll for quotes
+    // Keep a ref to the latest fetchQuote so the interval always uses fresh state
+    const fetchQuoteRef = useRef(fetchQuote);
     useEffect(() => {
-        // Only start polling if we have a valid amount and haven't started a swap
-        if (amount && parseFloat(amount) > 0 && !txId) {
-            // Get initial quote immediately if not already fetching
-            if (!quote && !loading) {
-                handleGetQuote(false);
-            }
+        fetchQuoteRef.current = fetchQuote;
+    });
 
-            // Set up polling interval (every 10 seconds)
-            const intervalId = setInterval(() => {
-                handleGetQuote(true); // Silent update (no loading spinner)
-            }, 10000);
-
-            return () => clearInterval(intervalId); // Cleanup on unmount or deps change
-        } else {
-            // Clear quote if amount is emptied
+    // Auto-poll for live quotes every 5 seconds
+    useEffect(() => {
+        if (!amount || parseFloat(amount) <= 0 || txId) {
             if (!amount) setQuote(null);
+            return;
         }
+
+        // Fetch immediately when amount/token changes
+        fetchQuoteRef.current(true);
+
+        // Then poll every 5 seconds
+        const intervalId = setInterval(() => {
+            fetchQuoteRef.current(true);
+        }, 5000);
+
+        return () => clearInterval(intervalId);
     }, [amount, toToken, toChain, txId]);
+
+    // Manual "Get Quote" button handler
+    const handleGetQuote = () => fetchQuote(false);
 
     const handleSwap = async () => {
         if (!quote || !isConnected) return;
@@ -198,7 +204,7 @@ const BridgePage: React.FC = () => {
 
                         {/* Action Button */}
                         <button
-                            onClick={quote ? handleSwap : () => handleGetQuote()}
+                            onClick={quote ? handleSwap : handleGetQuote}
                             disabled={loading || !isConnected}
                             className={`w-full mt-4 py-4 rounded-xl font-bold text-lg transition-all transform hover:scale-[1.02] active:scale-[0.98]
                                 ${!isConnected
