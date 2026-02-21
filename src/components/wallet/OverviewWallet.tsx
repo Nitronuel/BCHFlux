@@ -10,7 +10,8 @@ interface OverviewWalletProps {
 const OverviewWallet: React.FC<OverviewWalletProps> = ({ onTabChange }) => {
     const [showBalance, setShowBalance] = useState(true);
     const { markets } = useMarketStore();
-    const { balances, leverageBalances, positions } = useUserStore();
+    const { balances, leverageBalances, positions, accountMode } = useUserStore();
+    const isDemo = accountMode === 'demo';
 
     // Calculate Prices
     const btcPrice = markets.find(m => m.id === 'bitcoin')?.current_price || 0;
@@ -78,6 +79,12 @@ const OverviewWallet: React.FC<OverviewWalletProps> = ({ onTabChange }) => {
                     <div>
                         <div className="flex items-center gap-2 mb-2">
                             <h1 className="text-text-secondary text-sm font-medium">Estimated Total Balance</h1>
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isDemo
+                                    ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                                    : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                }`}>
+                                {isDemo ? 'Demo' : 'Live'}
+                            </span>
                             <button onClick={() => setShowBalance(!showBalance)} className="text-text-secondary hover:text-primary transition-colors">
                                 {showBalance ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                             </button>

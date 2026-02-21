@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Copy, Check, Info, QrCode, PlusCircle } from 'lucide-react';
 import { useUserStore } from '../../../store/userStore';
+import { useWalletStore } from '../../../store/walletStore';
 import { useUiStore } from '../../../store/uiStore';
 
 interface DepositModalProps {
@@ -18,12 +19,17 @@ const DepositModal: React.FC<DepositModalProps> = ({
     tokenSymbol,
     network
 }) => {
-    const { isDemoMode, updateBalance } = useUserStore();
+    const { accountMode, updateBalance } = useUserStore();
+    const { address: walletAddress } = useWalletStore();
     const { addToast } = useUiStore();
     const [copied, setCopied] = useState(false);
+    const isDemo = accountMode === 'demo';
 
-    // Mock address generator based on symbol
+    // Use real wallet address in live mode, mock in demo
     const getAddress = () => {
+        if (!isDemo && walletAddress) {
+            return walletAddress;
+        }
         const prefix = network.toLowerCase().includes('eth') ? '0x' :
             network.toLowerCase().includes('sol') ? 'Sol' : 'bc1';
         return `${prefix}7a9...3f2${tokenSymbol}99`; // Mock address
@@ -62,7 +68,7 @@ const DepositModal: React.FC<DepositModalProps> = ({
 
                 <div className="p-6 overflow-y-auto custom-scrollbar">
 
-                    {isDemoMode && (
+                    {isDemo && (
                         <div className="mb-6 bg-primary/10 border border-primary/20 rounded-lg p-4">
                             <h3 className="text-primary font-bold mb-2 flex items-center gap-2">
                                 <Info className="w-4 h-4" /> Demo Mode Active
@@ -80,7 +86,7 @@ const DepositModal: React.FC<DepositModalProps> = ({
                         </div>
                     )}
 
-                    {!isDemoMode && (
+                    {!isDemo && (
                         <>
                             {/* QR Code Section */}
                             <div className="flex flex-col items-center justify-center mb-8">

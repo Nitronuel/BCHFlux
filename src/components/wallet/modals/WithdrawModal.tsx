@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, ArrowUp, AlertCircle, CheckCircle } from 'lucide-react';
 import { useUserStore } from '../../../store/userStore';
+import { WalletService } from '../../../services/WalletService';
 
 interface WithdrawModalProps {
     isOpen: boolean;
@@ -31,9 +32,11 @@ const WithdrawModal: React.FC<WithdrawModalProps> = ({
         setError(null);
     };
 
-    const { isDemoMode, updateBalance } = useUserStore();
+    const { accountMode, updateBalance } = useUserStore();
+    const isDemo = accountMode === 'demo';
+    const [_txHash, setTxHash] = useState<string | null>(null);
 
-    const handleWithdraw = () => {
+    const handleWithdraw = async () => {
         // Validation
         if (!address) {
             setError('Please enter a destination address.');
@@ -51,15 +54,26 @@ const WithdrawModal: React.FC<WithdrawModalProps> = ({
         setError(null);
         setIsLoading(true);
 
-        // Simulate API call
-        setTimeout(() => {
+        try {
+            if (isDemo) {
+                // Demo mode: simulate withdrawal
+                await new Promise(r => setTimeout(r, 1500));
+                updateBalance(tokenSymbol, -parseFloat(amount));
+                setTxHash(`demo-tx-${Date.now()}`);
+            } else {
+                // Live mode: send real BCH
+                const hash = await WalletService.sendBch(
+                    address,
+                    { bch: parseFloat(amount) },
+                    undefined,
+                    false // real mode
+                );
+                setTxHash(hash);
+                // Balance will be synced from wallet polling
+            }
+
             setIsLoading(false);
             setSuccess(true);
-
-            if (isDemoMode) {
-                // Deduct balance in Demo Mode
-                updateBalance(tokenSymbol, -parseFloat(amount));
-            }
 
             // Auto close after success
             setTimeout(() => {
@@ -67,8 +81,12 @@ const WithdrawModal: React.FC<WithdrawModalProps> = ({
                 setSuccess(false);
                 setAddress('');
                 setAmount('');
-            }, 2000);
-        }, 1500);
+                setTxHash(null);
+            }, 3000);
+        } catch (err: any) {
+            setIsLoading(false);
+            setError(err?.message || 'Transaction failed. Please try again.');
+        }
     };
 
     return (

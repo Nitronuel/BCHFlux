@@ -15,42 +15,53 @@ import Toast from './components/common/Toast';
 
 import { useMarketStore } from './store/marketStore';
 import { useUserStore } from './store/userStore';
+import { useWalletStore } from './store/walletStore';
+import { WalletService } from './services/WalletService';
 
 function App() {
-  // Optimize subscription to prevent re-renders on price updates
   const initializeMarkets = useMarketStore((state) => state.initializeMarkets);
   const startLiveUpdates = useMarketStore((state) => state.startLiveUpdates);
-  const { initialize: initializeUser, fetchOrders, userId } = useUserStore();
+  const { initialize: initializeUser, fetchOrders, userId, accountMode, syncRealBalance } = useUserStore();
+  const { isConnected, setBalance: setWalletBalance } = useWalletStore();
 
   // Initialize markets and start WebSocket on mount
-  // Trigger HMR update
   useEffect(() => {
-    // Step 1: Initialize User (Generate ID if needed)
     initializeUser();
-
-    // Step 2: Load metadata (from cache or CoinGecko)
     initializeMarkets();
-
-    // Step 3: Start WebSocket for live price updates
     const unsubscribe = startLiveUpdates();
-
     return () => unsubscribe();
   }, [initializeMarkets, startLiveUpdates, initializeUser]);
 
-  // Poll for Order Updates (Sync with Backend)
+  // Poll for Order Updates
   useEffect(() => {
     if (!userId) return;
-
-    // Fetch immediately
     fetchOrders();
-
-    // Poll every 5 seconds (matching backend loop)
     const interval = setInterval(() => {
       fetchOrders();
     }, 5000);
-
     return () => clearInterval(interval);
   }, [userId, fetchOrders]);
+
+  // Real balance polling — sync wallet balance every 30s when in Live mode
+  useEffect(() => {
+    if (accountMode !== 'real' || !isConnected) return;
+
+    const syncBalance = async () => {
+      try {
+        const balance = await WalletService.getBalance();
+        syncRealBalance(balance.bch, balance.usd);
+        setWalletBalance(balance.bch, balance.usd);
+      } catch (err) {
+        console.warn('[App] Balance sync failed:', err);
+      }
+    };
+
+    // Sync immediately
+    syncBalance();
+    // Then poll every 30s
+    const interval = setInterval(syncBalance, 30000);
+    return () => clearInterval(interval);
+  }, [accountMode, isConnected, syncRealBalance, setWalletBalance]);
 
   return (
     <BrowserRouter>

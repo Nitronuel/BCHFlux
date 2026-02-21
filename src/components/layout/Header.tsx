@@ -7,11 +7,10 @@ import ConnectWalletModal from '../wallet/ConnectWalletModal';
 
 const Header: React.FC = () => {
     const location = useLocation();
-    // @ts-ignore - Store kept for future demo mode toggle
-    const _userStore = useUserStore();
-    const { isConnected, address, balance, disconnect } = useWalletStore();
+    const { accountMode, setAccountMode } = useUserStore();
+    const { isConnected, address, balance, disconnect, setAccountMode: setWalletMode } = useWalletStore();
     const [isConnectOpen, setIsConnectOpen] = useState(false);
-    const [isLoggedIn] = useState(true); // Mock login state
+    const [isLoggedIn] = useState(true);
 
     const isActive = (path: string) => location.pathname.startsWith(path);
 
@@ -19,17 +18,29 @@ const Header: React.FC = () => {
         { name: 'Markets', path: '/markets', hasDropdown: false },
         { name: 'Trade', path: '/trade', hasDropdown: true },
         { name: 'Leverage', path: '/leverage', hasDropdown: true },
-
         { name: 'Wallet', path: '/wallet', hasDropdown: true },
         { name: 'Payroll', path: '/payroll', hasDropdown: false },
     ];
 
     const formatAddress = (addr: string) => {
         if (!addr) return '';
-        // bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a
-        // show start...end
         const clean = addr.replace('bitcoincash:', '');
         return `${clean.substring(0, 6)}...${clean.substring(clean.length - 4)}`;
+    };
+
+    const handleModeSwitch = (mode: 'demo' | 'real') => {
+        if (mode === 'real' && !isConnected) {
+            // Can't switch to real without a connected wallet
+            setIsConnectOpen(true);
+            return;
+        }
+        setAccountMode(mode);
+        setWalletMode(mode);
+    };
+
+    const handleDisconnect = () => {
+        disconnect();
+        setAccountMode('demo');
     };
 
     return (
@@ -53,14 +64,36 @@ const Header: React.FC = () => {
                                     {item.name}
                                     {item.hasDropdown && <ChevronDown className="w-3 h-3 pt-0.5" />}
                                 </Link>
-                                {/* Mock Dropdown Indicator - would contain submenus in full implementation */}
                             </div>
                         ))}
                     </nav>
                 </div>
 
                 {/* Right: Actions */}
-                <div className="flex items-center gap-4 text-text-secondary">
+                <div className="flex items-center gap-3 text-text-secondary">
+                    {/* Mode Toggle Pill */}
+                    <div className="hidden md:flex items-center bg-background border border-border rounded-full p-0.5">
+                        <button
+                            onClick={() => handleModeSwitch('demo')}
+                            className={`px-3 py-1 text-xs font-bold rounded-full transition-all ${accountMode === 'demo'
+                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                    : 'text-text-secondary hover:text-text-primary'
+                                }`}
+                        >
+                            Demo
+                        </button>
+                        <button
+                            onClick={() => handleModeSwitch('real')}
+                            className={`px-3 py-1 text-xs font-bold rounded-full transition-all ${accountMode === 'real'
+                                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                    : 'text-text-secondary hover:text-text-primary'
+                                }`}
+                            title={!isConnected ? 'Connect wallet to go live' : 'Switch to real wallet'}
+                        >
+                            Live
+                        </button>
+                    </div>
+
                     {/* Connect Wallet Button */}
                     {isConnected && address ? (
                         <div className="hidden md:flex items-center gap-2 bg-background border border-border rounded-full px-3 py-1.5">
@@ -69,7 +102,7 @@ const Header: React.FC = () => {
                             </span>
                             <div className="h-4 w-[1px] bg-border"></div>
                             <button
-                                onClick={disconnect}
+                                onClick={handleDisconnect}
                                 className="text-xs font-mono text-text-secondary hover:text-red-400 transition-colors"
                                 title="Disconnect"
                             >
@@ -86,7 +119,7 @@ const Header: React.FC = () => {
                         </button>
                     )}
 
-                    {/* App Actions */}
+                    {/* Search */}
                     <div className="hidden lg:flex items-center gap-2 px-2 py-1 bg-background rounded-full border border-border focus-within:border-primary transition-colors">
                         <Search className="w-4 h-4 ml-2" />
                         <input
@@ -125,4 +158,3 @@ const Header: React.FC = () => {
 };
 
 export default Header;
-

@@ -23,7 +23,6 @@ export class WalletService {
             // Validate stored WIF before attempting to load
             let isValidFormat = false;
             if (storedWif && typeof storedWif === 'string' && storedWif.length > 10) {
-                // Basic WIF check: Mainnet (L, K, 5) or Testnet (c)
                 if (storedWif.startsWith('L') || storedWif.startsWith('K') || storedWif.startsWith('c') || storedWif.startsWith('5')) {
                     isValidFormat = true;
                 }
@@ -34,26 +33,20 @@ export class WalletService {
                 try {
                     wallet = await Wallet.fromWIF(storedWif);
                 } catch (e) {
-                    // Fail silently-ish to avoid scaring user, just log info
                     console.info("Stored WIF could not be restored. Creating new wallet.");
                     localStorage.removeItem('bch_internal_wif');
                     wallet = null;
                 }
             } else if (storedWif) {
-                // Invalid format detected (e.g. old corrupt data)
                 console.info("Detected invalid wallet format in storage. Cleaning up...");
                 localStorage.removeItem('bch_internal_wif');
             }
 
             if (!wallet) {
                 console.log('Creating new random wallet...');
-                // Create random wallet
                 wallet = await Wallet.newRandom();
 
-                // Get WIF securely. 
-                // Use exportPrivateKey which is standard in mainnet-js for WIF
                 let wif: string = "";
-
                 if (typeof (wallet as any).privateKeyWif === 'string') {
                     wif = (wallet as any).privateKeyWif;
                 } else if (typeof (wallet as any).exportPrivateKey === 'function') {
@@ -63,20 +56,17 @@ export class WalletService {
                     if (typeof val === 'string') wif = val;
                 }
 
-                // Verify WIF format (basic check)
                 if (!wif || (!wif.startsWith('L') && !wif.startsWith('K') && !wif.startsWith('c') && !wif.startsWith('5'))) {
                     console.error("Generated invalid WIF, forcing exportPrivateKey", wif);
                     wif = await (wallet as any).exportPrivateKey();
                 }
 
-                // Save WIF securely
                 localStorage.setItem('bch_internal_wif', wif);
             }
 
             this.wallet = wallet;
             this._connectionType = 'local';
 
-            // Fix: getAddress usage. 
             if (typeof (wallet as any).getAddress === 'function') {
                 return (await (wallet as any).getAddress()) as string;
             } else if ((wallet as any).address) {
@@ -92,35 +82,49 @@ export class WalletService {
     }
 
     /**
-     * Get current balance
+     * Get current balance from the actual chain.
+     * Returns real BCH balance — no demo injection.
      */
     // @ts-ignore
     static async getBalance(): Promise<{ bch: number; usd: number }> {
-        if (!this.wallet) return { bch: 0, usd: 0 };
-
-        const balance = await this.wallet.getBalance();
-
-        // DEMO LOGIC: Inject fake balance for testing if empty
-        let bch = (balance as any).bch || 0;
-        if (bch === 0) {
-            console.log("DEMO MODE: Injecting 0.5 BCH for testing");
-            bch = 0.5;
+        // WalletConnect — no local wallet object, return 0 (balance comes from session)
+        if (this._connectionType === 'walletconnect') {
+            return { bch: 0, usd: 0 };
         }
 
-        return {
-            bch: bch,
-            usd: (balance as any).usd || (bch * 500)
-        };
+        if (!this.wallet) return { bch: 0, usd: 0 };
+
+        try {
+            const balance = await this.wallet.getBalance();
+            const bch = (balance as any).bch || 0;
+            return {
+                bch,
+                usd: (balance as any).usd || (bch * 400)
+            };
+        } catch (error) {
+            console.warn('[WalletService] Failed to fetch balance:', error);
+            return { bch: 0, usd: 0 };
+        }
     }
 
     /**
-     * Send BCH with optional Memo (OP_RETURN)
+     * Send BCH with optional Memo (OP_RETURN).
+     * In demo mode: simulates the transaction.
+     * In real mode: sends a real transaction.
      */
     static async sendBch(
         to: string,
         amountModels: { bch?: number, usd?: number },
-        memo?: string
+        memo?: string,
+        isDemoMode: boolean = false
     ): Promise<string> {
+        // Demo mode — always simulate
+        if (isDemoMode) {
+            console.log('[WalletService] Demo mode — simulating transaction');
+            await new Promise(r => setTimeout(r, 1500)); // Fake network delay
+            return `demo-tx-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        }
+
         // Route through WalletConnect if connected externally
         if (this._connectionType === 'walletconnect') {
             return walletConnectService.sendTransaction({
@@ -132,41 +136,24 @@ export class WalletService {
 
         if (!this.wallet) throw new Error("Wallet not initialized");
 
-        // Convert BCH to Satoshis manually to avoid "BigInt" errors with floats
         const sats = Math.floor((amountModels.bch || 0) * 100000000);
 
         const outputs: any[] = [
             {
                 cashaddr: to,
                 value: sats,
-                unit: 'sat' // Explicitly use sats
+                unit: 'sat'
             }
         ];
 
-        // Add OP_RETURN Output if memo exists
         if (memo) {
-            // Use array format which is supported by mainnet-js and easier to use than object format
             outputs.push(["OP_RETURN", memo]);
         }
 
-        console.log("WalletService: Sending transaction with outputs:", JSON.stringify(outputs));
+        console.log("[WalletService] Sending real transaction with outputs:", JSON.stringify(outputs));
 
-        try {
-            const { txId } = await this.wallet.send(outputs);
-            return txId || "";
-        } catch (error: any) {
-            console.error("WalletService: Send failed:", error);
-
-            // DEMO MODE HANDLER
-            // If the error is lack of funds (no Unspent Outputs) AND we are likely in demo mode:
-            // We simulate a successful transaction so the user can see the UI flow.
-            if (error.message && error.message.includes("no Unspent Outputs")) {
-                console.warn("DEMO MODE: Simulating transaction success (Wallet has 0 real funds).");
-                return `demo-tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-            }
-
-            throw error;
-        }
+        const { txId } = await this.wallet.send(outputs);
+        return txId || "";
     }
 
     /**
@@ -176,5 +163,19 @@ export class WalletService {
         if (!this.wallet) throw new Error("Wallet not initialized");
         const sig = await this.wallet.sign(message);
         return (sig as any).signature || sig;
+    }
+
+    /**
+     * Get the connection type
+     */
+    static get connectionType() {
+        return this._connectionType;
+    }
+
+    /**
+     * Set connection type externally (e.g., for WalletConnect)
+     */
+    static setConnectionType(type: 'local' | 'walletconnect' | null) {
+        this._connectionType = type;
     }
 }

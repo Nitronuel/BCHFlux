@@ -9,6 +9,8 @@ export const calculateCrossRate = (tokenPriceUsd: number, bchPriceUsd: number): 
     return bchPriceUsd / tokenPriceUsd;
 };
 
+export type AccountMode = 'demo' | 'real';
+
 export interface Order {
     id: string;
     symbol: string;
@@ -42,24 +44,47 @@ export interface Position {
     roe: number; // Return on Equity %
     timestamp: number;
     collateralSymbol?: string; // e.g., 'BCH' or 'USDT'
-    entryCollateralPrice?: number; // Price of collateral at entry (to calculate impermanent loss if needed)
+    entryCollateralPrice?: number;
 }
 
-interface Balance {
+export interface Balance {
     available: number;
     locked: number;
     averageBuyPrice?: number;
 }
 
+// Default demo balances
+const DEMO_BALANCES: Record<string, Balance> = {
+    'BCH': { available: 10, locked: 0, averageBuyPrice: 350 },
+    'USDT': { available: 1000, locked: 0 },
+};
+
+const DEMO_LEVERAGE_BALANCES: Record<string, Balance> = {
+    'BCH': { available: 10, locked: 0, averageBuyPrice: 350 },
+};
+
 interface UserState {
     userId: string | null;
+    accountMode: AccountMode;
+    // Legacy compat — derived from accountMode
     isDemoMode: boolean;
+
+    // Balances
     balances: Record<string, Balance>;
-    leverageBalances: Record<string, Balance>; // New separate wallet
+    leverageBalances: Record<string, Balance>;
+
+    // Trading
     orders: Order[];
     positions: Position[];
+
+    // Actions
     initialize: () => void;
+    setAccountMode: (mode: AccountMode) => void;
+    syncRealBalance: (bch: number, usdValue: number) => void;
+
+    // Legacy compat
     toggleDemoMode: (enabled: boolean) => void;
+
     fetchBalances: () => Promise<void>;
     fetchOrders: () => Promise<void>;
     addOrder: (order: Order) => Promise<boolean>;
@@ -90,53 +115,102 @@ export const useUserStore = create<UserState>()(
     persist(
         (set, get) => ({
             userId: null,
-            isDemoMode: false,
+            accountMode: 'demo',
+            // isDemoMode derived for backward compat
+            get isDemoMode() {
+                return this.accountMode === 'demo';
+            },
 
             // Initial Balances (Demo Mode by default)
-            balances: {
-                'BCH': { available: 10, locked: 0, averageBuyPrice: 350 },
-                'USDT': { available: 1000, locked: 0 },
+            balances: { ...DEMO_BALANCES },
+            leverageBalances: { ...DEMO_LEVERAGE_BALANCES },
+
+            /**
+             * Set account mode: 'demo' or 'real'
+             * Resets balances, orders, and positions for the new mode.
+             */
+            setAccountMode: (mode: AccountMode) => {
+                if (mode === 'demo') {
+                    // Switch to demo — reset to demo balances
+                    set({
+                        accountMode: 'demo',
+                        balances: { ...DEMO_BALANCES },
+                        leverageBalances: { ...DEMO_LEVERAGE_BALANCES },
+                        orders: [],
+                        positions: [],
+                    });
+                } else {
+                    // Switch to real — start with 0 BCH, will be synced from wallet
+                    set({
+                        accountMode: 'real',
+                        balances: {
+                            'BCH': { available: 0, locked: 0 },
+                        },
+                        leverageBalances: {
+                            'BCH': { available: 0, locked: 0 },
+                        },
+                        orders: [],
+                        positions: [],
+                    });
+                }
             },
-            leverageBalances: {
-                'BCH': { available: 10, locked: 0, averageBuyPrice: 350 },
+
+            /**
+             * Sync real BCH balance from the connected wallet.
+             * Only updates BCH in the balances — called from balance polling.
+             */
+            syncRealBalance: (bch: number, usdValue: number) => {
+                const { accountMode } = get();
+                if (accountMode !== 'real') return;
+
+                set((state) => ({
+                    balances: {
+                        ...state.balances,
+                        'BCH': {
+                            ...state.balances['BCH'],
+                            available: Math.max(0, bch - (state.balances['BCH']?.locked || 0)),
+                            locked: state.balances['BCH']?.locked || 0,
+                            averageBuyPrice: usdValue > 0 && bch > 0 ? usdValue / bch : undefined,
+                        },
+                    },
+                }));
+            },
+
+            // Legacy compat
+            toggleDemoMode: (enabled: boolean) => {
+                get().setAccountMode(enabled ? 'demo' : 'real');
             },
 
             initialize: async () => {
                 const { userId } = get();
-                // If no userId, or we want to force a valid backend user (since v4 wipe)
                 if (!userId) {
                     try {
                         const res = await apiClient.post('/api/dev/init');
                         if (res.data && res.data.userId) {
                             set({ userId: res.data.userId });
-                            await get().fetchBalances(); // Fetch the fresh 10 BCH
+                            await get().fetchBalances();
                         }
                     } catch (e) {
                         console.error('Failed to init dev user', e);
-                        // Fallback just in case backend is down, but this is less ideal
                         const newId = crypto.randomUUID();
                         set({ userId: newId });
                     }
                 }
             },
 
-            toggleDemoMode: async (enabled: boolean) => {
-                set({ isDemoMode: enabled });
-                // Fetch data for the new mode
-                await get().fetchOrders();
-                await get().fetchBalances();
-            },
-
             orders: [],
+            positions: [],
 
             fetchBalances: async () => {
-                const { userId, isDemoMode } = get();
+                const { userId, accountMode } = get();
                 if (!userId) return;
 
+                // In real mode, balances come from wallet sync, not backend
+                if (accountMode === 'real') return;
+
                 try {
-                    const res = await apiClient.get(`/api/balances?userId=${userId}&isDemo=${isDemoMode}`);
+                    const res = await apiClient.get(`/api/balances?userId=${userId}&isDemo=true`);
                     if (res.data) {
-                        // Transform array to Record
                         const newBalances: Record<string, Balance> = {};
                         if (Array.isArray(res.data)) {
                             res.data.forEach((b: any) => {
@@ -146,7 +220,9 @@ export const useUserStore = create<UserState>()(
                                 };
                             });
                         }
-                        set({ balances: newBalances });
+                        if (Object.keys(newBalances).length > 0) {
+                            set({ balances: newBalances });
+                        }
                     }
                 } catch (e) {
                     console.error('Failed to fetch balances', e);
@@ -154,11 +230,11 @@ export const useUserStore = create<UserState>()(
             },
 
             fetchOrders: async () => {
-                const { userId, isDemoMode } = get();
+                const { userId, accountMode } = get();
                 if (!userId) return;
 
                 try {
-                    const res = await apiClient.get(`/api/orders?userId=${userId}&isDemo=${isDemoMode}`);
+                    const res = await apiClient.get(`/api/orders?userId=${userId}&isDemo=${accountMode === 'demo'}`);
                     if (res.data) {
                         set({ orders: res.data });
                     }
@@ -168,9 +244,7 @@ export const useUserStore = create<UserState>()(
             },
 
             addOrder: async (order: Order) => {
-                const { isDemoMode, userId } = get();
-                // If no userId, we can't create orders even in demo mode (backend needs userId)
-                // Demo Mode handles userId generation in initialize()
+                const { accountMode, userId } = get();
                 if (!userId) return false;
 
                 try {
@@ -180,11 +254,12 @@ export const useUserStore = create<UserState>()(
                         variant: order.variant || 'spot',
                         chainId: order.chainId,
                         pairAddress: order.pairAddress,
-                        isDemo: isDemoMode
+                        isDemo: accountMode === 'demo'
                     });
-                    // Refresh data
                     await get().fetchOrders();
-                    await get().fetchBalances();
+                    if (accountMode === 'demo') {
+                        await get().fetchBalances();
+                    }
                     return true;
                 } catch (e) {
                     console.error('Order Failed:', e);
@@ -207,56 +282,29 @@ export const useUserStore = create<UserState>()(
 
             fillOrder: (orderId: string, fillPrice: number, fillAmount: number) => set((state) => {
                 const order = state.orders.find(o => o.id === orderId);
-                // Allow filling 'Open' or 'Partial' orders
                 if (!order || (order.status !== 'Open' && order.status !== 'Partial')) return state;
 
                 const [base, quote] = order.symbol.split('/');
-
-                // Validate fill amount
                 const remaining = order.amount - (order.filled || 0);
-                if (fillAmount > remaining) {
-                    fillAmount = remaining; // Cap at remaining
-                }
-
+                if (fillAmount > remaining) fillAmount = remaining;
                 if (fillAmount <= 0) return state;
-
-                // Logic:
-                // If Buy: 
-                //   Locked Quote was calculated based on Limit Price (or initial estimated total).
-                //   We need to unlock the portion corresponding to this fill.
-                //   Cost = fillAmount * fillPrice.
-                //   Unlock = fillAmount * order.price (The amount we locked for this chunk).
-                //   Refund = Unlock - Cost. (If we bought cheaper than limit).
-
-                // If Sell:
-                //   Locked Base = fillAmount.
-                //   Revenue = fillAmount * fillPrice.
 
                 const newState = { ...state };
                 const newBalances = { ...state.balances };
 
                 if (order.side === 'buy') {
-                    // Calculate how much quote we locked for THIS chunk
-                    // We locked `order.price * order.amount` initially.
-                    // So for this chunk, we locked `order.price * fillAmount`.
                     const lockedForChunk = fillAmount * order.price;
                     const actualCost = fillAmount * fillPrice;
 
                     const quoteBal = newBalances[quote] || { available: 0, locked: 0 };
                     const baseBal = newBalances[base] || { available: 0, locked: 0, averageBuyPrice: 0 };
 
-                    // Update Average Buy Price
                     const oldTotal = baseBal.available + baseBal.locked;
                     const currentAvg = baseBal.averageBuyPrice || 0;
-
-                    let newAvg = currentAvg;
                     const oldVal = oldTotal * currentAvg;
                     const newVal = fillAmount * fillPrice;
-                    newAvg = oldTotal + fillAmount > 0 ? (oldVal + newVal) / (oldTotal + fillAmount) : fillPrice;
+                    const newAvg = oldTotal + fillAmount > 0 ? (oldVal + newVal) / (oldTotal + fillAmount) : fillPrice;
 
-                    // Unlock the locked amount, deduct actual cost
-                    // New available = old available + (locked amount - actual cost)
-                    // But we must ensure it doesn't go negative
                     const newQuoteAvailable = Math.max(0, quoteBal.available + (lockedForChunk - actualCost));
                     const newQuoteLocked = Math.max(0, quoteBal.locked - lockedForChunk);
 
@@ -271,7 +319,6 @@ export const useUserStore = create<UserState>()(
                         averageBuyPrice: newAvg
                     };
                 } else {
-                    // Sell
                     const lockedBase = fillAmount;
                     const revenue = fillAmount * fillPrice;
 
@@ -289,8 +336,6 @@ export const useUserStore = create<UserState>()(
                 }
 
                 newState.balances = newBalances;
-
-                // Update the order's filled state
                 const newFilled = (order.filled || 0) + fillAmount;
                 const newStatus = newFilled >= order.amount ? 'Filled' : 'Partial';
 
@@ -303,16 +348,12 @@ export const useUserStore = create<UserState>()(
                 return newState;
             }),
 
-            positions: [],
-
             openPosition: (positionData) => {
                 const { balances, leverageBalances, positions } = get();
 
-                // If Futures, use BCH as collateral from Leverage Wallet
                 const isFutures = true;
                 const collateralAsset = isFutures ? 'BCH' : 'USDT';
 
-                // Margin Required in USD
                 const notionalUSD = positionData.entryPrice * positionData.size;
                 const marginUSD = notionalUSD / positionData.leverage;
 
@@ -320,18 +361,14 @@ export const useUserStore = create<UserState>()(
                 const currentBal = targetBalances[collateralAsset] || { available: 0, locked: 0 };
 
                 let marginRequiredToken = 0;
-
                 if (collateralAsset === 'BCH') {
-                    // Start simple: Margin is passed as the token amount for BCH-margined?
-                    // Or we calculate token amount from USD margin using entry price?
-                    // Let's rely on positionData.margin being the correct amount of Collateral Token.
                     marginRequiredToken = positionData.margin;
                 } else {
                     marginRequiredToken = marginUSD;
                 }
 
                 if (currentBal.available < marginRequiredToken) {
-                    return false; // Insufficient margin
+                    return false;
                 }
 
                 const newPosition: Position = {
@@ -355,7 +392,6 @@ export const useUserStore = create<UserState>()(
 
                 set(() => ({
                     positions: [newPosition, ...positions],
-                    // Dynamically update the correct wallet
                     ...(isFutures ? { leverageBalances: newTargetBalances } : { balances: newTargetBalances })
                 }));
                 return true;
@@ -365,7 +401,6 @@ export const useUserStore = create<UserState>()(
                 const position = state.positions.find(p => p.id === positionId);
                 if (!position) return state;
 
-                // 1. Calculate PnL in USD
                 let pnlUSD = 0;
                 if (position.side === 'Long') {
                     pnlUSD = (closePrice - position.entryPrice) * position.size;
@@ -374,30 +409,25 @@ export const useUserStore = create<UserState>()(
                 }
 
                 const collateralAsset = position.collateralSymbol || 'USDT';
-                const isFutures = collateralAsset === 'BCH'; // Infer from asset for now
+                const isFutures = collateralAsset === 'BCH';
                 const targetBalances = isFutures ? state.leverageBalances : state.balances;
 
                 const bal = targetBalances[collateralAsset] || { available: 0, locked: 0 };
                 let payout = 0;
 
                 if (collateralAsset === 'BCH') {
-                    // PnL in USD -> BCH
-                    // Use closePrice if it matches the pair, or fallback
                     let bchPrice = 0;
                     if (position.symbol.includes('BCH')) {
                         bchPrice = closePrice;
                     } else {
-                        bchPrice = 400; // Fallback
+                        bchPrice = 400;
                     }
-
                     const pnlBCH = bchPrice > 0 ? pnlUSD / bchPrice : 0;
                     payout = position.margin + pnlBCH;
                 } else {
-                    // USDT
                     payout = position.margin + pnlUSD;
                 }
 
-                // New Balances
                 const newTargetBalances = {
                     ...targetBalances,
                     [collateralAsset]: {
@@ -432,7 +462,7 @@ export const useUserStore = create<UserState>()(
                         ...state.balances,
                         [symbol]: {
                             ...current,
-                            available: Math.max(0, current.available + amount) // Ensure non-negative
+                            available: Math.max(0, current.available + amount)
                         }
                     }
                 };
@@ -443,17 +473,14 @@ export const useUserStore = create<UserState>()(
 
                 return {
                     positions: state.positions.map(pos => {
-                        // Find market data that matches position symbol
                         const market = markets.find(m =>
                             m.symbol.toUpperCase() === pos.symbol.toUpperCase() ||
-                            m.symbol.toUpperCase().replace('USDT', '') === pos.symbol.toUpperCase() // loose match
+                            m.symbol.toUpperCase().replace('USDT', '') === pos.symbol.toUpperCase()
                         );
 
                         if (!market) return pos;
 
                         const markPrice = market.current_price;
-
-                        // Calc Unrealized PnL
                         let pnl = 0;
                         if (pos.side === 'Long') {
                             pnl = (markPrice - pos.entryPrice) * pos.size;
@@ -461,7 +488,6 @@ export const useUserStore = create<UserState>()(
                             pnl = (pos.entryPrice - markPrice) * pos.size;
                         }
 
-                        // ROE % = PnL / Margin
                         const roe = (pnl / pos.margin) * 100;
 
                         return {
@@ -474,9 +500,8 @@ export const useUserStore = create<UserState>()(
             })
         }),
         {
-            name: 'user-storage-v4',
+            name: 'user-storage-v5',
             onRehydrateStorage: () => (state) => {
-                // Auto-repair any negative balances on load
                 if (state) {
                     if (state.balances) {
                         const repairedBalances = repairBalances(state.balances);

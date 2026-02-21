@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { AccountMode } from './userStore';
 
 interface WalletState {
     isConnected: boolean;
@@ -10,12 +11,14 @@ interface WalletState {
     };
     connectionType: 'mainnet' | 'local' | 'extension' | 'walletconnect' | null;
     isConnecting: boolean;
+    accountMode: AccountMode;
 
     // Actions
     setConnected: (address: string, type: 'mainnet' | 'local' | 'extension' | 'walletconnect') => void;
     setBalance: (bch: number, usd: number) => void;
     disconnect: () => void;
     setConnecting: (loading: boolean) => void;
+    setAccountMode: (mode: AccountMode) => void;
 }
 
 export const useWalletStore = create<WalletState>()(
@@ -26,6 +29,7 @@ export const useWalletStore = create<WalletState>()(
             balance: { bch: 0, usd: 0 },
             connectionType: null,
             isConnecting: false,
+            accountMode: 'demo' as AccountMode,
 
             setConnected: (address, type) => set({
                 isConnected: true,
@@ -42,18 +46,20 @@ export const useWalletStore = create<WalletState>()(
                 isConnected: false,
                 address: null,
                 connectionType: null,
-                balance: { bch: 0, usd: 0 }
+                balance: { bch: 0, usd: 0 },
+                accountMode: 'demo' as AccountMode, // Force back to demo on disconnect
             }),
 
             setConnecting: (loading) => set({ isConnecting: loading }),
+
+            setAccountMode: (mode: AccountMode) => set({ accountMode: mode }),
         }),
         {
-            name: 'wallet-storage',
+            name: 'wallet-storage-v2',
             partialize: (state) => ({
-                // Persist address but not connection state initially if we want auto-reconnect logic later
-                // For now, persist basic info
                 address: state.address,
-                connectionType: state.connectionType
+                connectionType: state.connectionType,
+                accountMode: state.accountMode,
             }),
         }
     )
