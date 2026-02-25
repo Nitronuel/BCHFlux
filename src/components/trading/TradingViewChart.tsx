@@ -210,33 +210,18 @@ const TradingViewChart: React.FC<TradingViewChartProps> = memo(({
 
             {/* Chart container */}
             <div className="flex-1 w-full bg-[#181A20] relative">
-                {chainId && pairAddress ? (() => {
-                    // Map chainId to GeckoTerminal format
-                    const getGeckoNetwork = (id: string) => {
-                        const map: Record<string, string> = {
-                            'ethereum': 'eth',
-                            'binance-smart-chain': 'bsc',
-                            'arbitrum-one': 'arbitrum',
-                            'polygon-pos': 'polygon',
-                            'optimistic-ethereum': 'optimism',
-                            'avalanche': 'avax'
-                        };
-                        return map[id] || id;
-                    };
-                    const network = getGeckoNetwork(chainId);
-                    return (
-                        <iframe
-                            src={`https://www.geckoterminal.com/${network}/pools/${pairAddress}?embed=1&info=0&swaps=0`}
-                            style={{
-                                width: '100%',
-                                height: '100%',
-                                display: 'block',
-                                border: '0',
-                            }}
-                            title="GeckoTerminal Chart"
-                        />
-                    );
-                })() : (
+                {chainId && pairAddress ? (
+                    <iframe
+                        src={`https://dexscreener.com/${chainId}/${pairAddress}?embed=1&theme=dark&trades=0&info=0`}
+                        style={{
+                            width: '100%',
+                            height: '100%',
+                            display: 'block',
+                            border: '0',
+                        }}
+                        title="DexScreener Chart"
+                    />
+                ) : (
                     <div
                         ref={containerRef}
                         className="w-full h-full"
