@@ -21,7 +21,7 @@ import { WalletService } from './services/WalletService';
 function App() {
   const initializeMarkets = useMarketStore((state) => state.initializeMarkets);
   const startLiveUpdates = useMarketStore((state) => state.startLiveUpdates);
-  const { initialize: initializeUser, fetchOrders, userId, accountMode, syncRealBalance } = useUserStore();
+  const { initialize: initializeUser, fetchOrders, fetchPositions, userId, accountMode, syncRealBalance } = useUserStore();
   const { isConnected, setBalance: setWalletBalance } = useWalletStore();
 
   // Initialize markets and start WebSocket on mount
@@ -36,11 +36,13 @@ function App() {
   useEffect(() => {
     if (!userId) return;
     fetchOrders();
+    fetchPositions();
     const interval = setInterval(() => {
       fetchOrders();
+      fetchPositions();
     }, 5000);
     return () => clearInterval(interval);
-  }, [userId, fetchOrders]);
+  }, [userId, fetchOrders, fetchPositions]);
 
   // Real balance polling — sync wallet balance every 30s when in Live mode
   useEffect(() => {

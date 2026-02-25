@@ -1,6 +1,5 @@
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
-
 interface LeverageSelectorProps {
     currentLeverage: number;
     maxLeverage: number;

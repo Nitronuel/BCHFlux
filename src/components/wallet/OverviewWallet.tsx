@@ -10,7 +10,7 @@ interface OverviewWalletProps {
 const OverviewWallet: React.FC<OverviewWalletProps> = ({ onTabChange }) => {
     const [showBalance, setShowBalance] = useState(true);
     const { markets } = useMarketStore();
-    const { balances, leverageBalances, positions, accountMode } = useUserStore();
+    const { balances, positions, accountMode } = useUserStore();
     const isDemo = accountMode === 'demo';
 
     // Calculate Prices
@@ -30,16 +30,14 @@ const OverviewWallet: React.FC<OverviewWalletProps> = ({ onTabChange }) => {
 
 
     // --- Leverage Calculation ---
-    // Leverage Balance = Sum (Available + Locked) * Price + Unrealized PnL
+    // Since balances are combined now, we can calculate leverage value
+    // from positions margin or locked BCH. For simplicity, we just use 0 
+    // or calculate based on open positions margin if needed.
     let leverageUsdValue = 0;
-    for (const [symbol, balance] of Object.entries(leverageBalances)) {
-        let price = 1;
-        if (symbol !== 'USDT' && symbol !== 'USDC') {
-            const market = markets.find(m => m.symbol.toUpperCase() === symbol);
-            price = market?.current_price || 0;
-        }
-        leverageUsdValue += (balance.available + balance.locked) * price;
-    }
+    // For now, we rely on totalUnrealizedPnLUSD and margin.
+    const marginLockedBCH = (balances['BCH']?.locked || 0);
+    const bchPrice = markets.find(m => m.id === 'bitcoin-cash')?.current_price || 0;
+    leverageUsdValue = marginLockedBCH * bchPrice;
 
     const totalUnrealizedPnLUSD = positions.reduce((sum, p) => sum + p.unrealizedPnL, 0); // Assuming PnL is in USD
 
@@ -80,8 +78,8 @@ const OverviewWallet: React.FC<OverviewWalletProps> = ({ onTabChange }) => {
                         <div className="flex items-center gap-2 mb-2">
                             <h1 className="text-text-secondary text-sm font-medium">Estimated Total Balance</h1>
                             <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isDemo
-                                    ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-                                    : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                                : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                                 }`}>
                                 {isDemo ? 'Demo' : 'Live'}
                             </span>

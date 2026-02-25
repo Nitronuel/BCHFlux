@@ -19,6 +19,20 @@ export class BalancesService {
 
         if (error || !data) {
             // If checking balance logic is strict, we might want to return 0 or create entry
+            if (isDemo) {
+                // Auto-seed demo balances
+                const defaultAmount = symbol === 'BCH' ? 5 : (symbol === 'USDT' || symbol === 'USDC' ? 1000 : 0);
+
+                await admin.from('balances').upsert({
+                    user_id: userId,
+                    token_symbol: symbol,
+                    available: defaultAmount,
+                    locked: 0,
+                    is_demo: true
+                }, { onConflict: 'user_id, token_symbol, is_demo' });
+
+                return { available: defaultAmount, locked: 0 };
+            }
             // For now, return a default object if not found
             return { available: 0, locked: 0 };
         }
@@ -188,6 +202,39 @@ export class BalancesService {
                 .eq('is_demo', isDemo);
 
             if (err2) throw new Error(`Transfer failed (Credit): ${err2.message}`);
+        }
+
+        return true;
+    }
+
+    // Sync a live Web3 wallet balance to the backend database
+    async syncBalance(userId: string, symbol: string, amount: number, isDemo: boolean = false) {
+        const admin = this.supabaseService.getAdminClient();
+
+        let bal = await this.getBalance(userId, symbol, isDemo);
+
+        if (bal.available === 0 && bal.locked === 0) {
+            // Create if not exists
+            await admin
+                .from('balances')
+                .upsert({
+                    user_id: userId,
+                    token_symbol: symbol,
+                    available: amount,
+                    is_demo: isDemo
+                }, { onConflict: 'user_id, token_symbol, is_demo' });
+        } else {
+            // Update available balance (Total Web3 balance minus locked collateral)
+            const newAvailable = Math.max(0, amount - bal.locked);
+            await admin
+                .from('balances')
+                .update({
+                    available: newAvailable,
+                    updated_at: new Date()
+                })
+                .eq('user_id', userId)
+                .eq('token_symbol', symbol)
+                .eq('is_demo', isDemo);
         }
 
         return true;

@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { OrdersModule } from './orders/orders.module';
 import { StreamsModule } from './streams/streams.module';
 import { BridgeModule } from './bridge/bridge.module';
+import { FuturesModule } from './futures/futures.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { BridgeModule } from './bridge/bridge.module';
     OrdersModule,
     StreamsModule,
     BridgeModule,
+    FuturesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

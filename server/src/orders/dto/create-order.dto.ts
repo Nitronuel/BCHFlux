@@ -25,9 +25,19 @@ export class CreateOrderDto {
     @IsPositive()
     amount: number;
 
+    // --- Futures Fields ---
     @IsNumber()
     @IsOptional()
     leverage?: number;
+
+    @IsNumber()
+    @IsOptional()
+    margin?: number;
+
+    @IsNumber()
+    @IsOptional()
+    liquidationPrice?: number;
+    // ----------------------
 
     @IsString()
     @IsOptional()

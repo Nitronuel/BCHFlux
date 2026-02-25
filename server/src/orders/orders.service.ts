@@ -18,19 +18,36 @@ export class OrdersService {
     // Create a new order
     async createOrder(userId: string, createOrderDto: CreateOrderDto) {
         const admin = this.supabaseService.getAdminClient();
-        const { symbol, side, type, price, amount, leverage, variant, chainId, pairAddress, isDemo } = createOrderDto;
+        const { symbol, side, type, price, amount, leverage, margin, liquidationPrice, variant, chainId, pairAddress, isDemo } = createOrderDto;
 
         // 1. Calculate required funds to lock
         let assetToLock = '';
         let amountToLock = 0;
 
+        // Values to insert for Futures specifically
+        let calculatedLiqPrice = liquidationPrice;
+        let entryPrice = price;
+
         if (variant === 'futures') {
-            assetToLock = 'USDT';
+            // In our new architecture, margin is provided as BCH.
+            // If the frontend didn't pass margin, we fallback to our old calculation (Notional / Leverage)
+            assetToLock = 'BCH';
             const notional = (price || 0) * amount; // Market orders in futures need estimate? Assume limit for now
             if (!price && type === 'limit') throw new BadRequestException('Price required for limit orders');
 
-            // Simplified margin calc
-            amountToLock = notional / (leverage || 1);
+            if (margin) {
+                amountToLock = margin;
+            } else {
+                amountToLock = notional / (leverage || 1);
+            }
+
+            // Simple Auto-Liquidation calculation fallback if frontend didn't provide one
+            if (!calculatedLiqPrice && price && leverage) {
+                calculatedLiqPrice = side === 'buy'
+                    ? price * (1 - (1 / leverage) + 0.005)
+                    : price * (1 + (1 / leverage) - 0.005);
+            }
+
         } else {
             // Spot
             const [base, quote] = symbol.split('/');
@@ -48,31 +65,48 @@ export class OrdersService {
 
         // 3. Insert Order
         try {
+            const insertData: any = {
+                user_id: userId,
+                symbol,
+                side,
+                type,
+                variant,
+                price,
+                amount,
+                chain_id: chainId,
+                pair_address: pairAddress,
+                filled: 0,
+                status: 'open',
+                created_at: new Date(),
+                is_demo: isDemo
+            };
+
+            // Add Futures fields if applicable
+            if (variant === 'futures') {
+                insertData.leverage = leverage || 1;
+                insertData.margin = margin || amountToLock;
+                insertData.entry_price = entryPrice;
+                insertData.liquidation_price = calculatedLiqPrice;
+                // Note: 'status' could technically be 'open_position' but we stick to 'open' for now
+            }
+
             const { data, error } = await admin
                 .from('orders')
-                .insert({
-                    user_id: userId,
-                    symbol,
-                    side,
-                    type,
-                    variant,
-                    price,
-                    amount,
-                    chain_id: chainId,
-                    pair_address: pairAddress,
-                    filled: 0,
-                    status: 'open', // Should be validated enum
-                    created_at: new Date(),
-                    is_demo: isDemo // Save the flag
-                })
+                .insert(insertData)
                 .select()
                 .single();
 
             if (error) throw new Error(error.message);
             return data;
         } catch (err) {
+            require('fs').appendFileSync('server-debug.log', '[createOrder Error] ' + JSON.stringify({ message: err.message, details: err.details, hint: err.hint, code: err.code }) + '\n');
+
             // Rollback: Unlock funds if insert fails
-            await this.balancesService.unlockFunds(userId, assetToLock, amountToLock, isDemo);
+            try {
+                await this.balancesService.unlockFunds(userId, assetToLock, amountToLock, isDemo);
+            } catch (rollbackErr) {
+                console.error('[createOrder Rollback Error]', rollbackErr);
+            }
             throw new BadRequestException(`Order creation failed: ${err.message}`);
         }
     }
@@ -112,24 +146,18 @@ export class OrdersService {
                 amountToUnlock = order.amount - order.filled;
             }
         } else if (order.variant === 'futures') {
-            assetToUnlock = 'USDT';
-            // Simple margin unlock logic
-            // For full real logic, we'd need leverage and entry price
-            // Assume 100% of remaining notional / leverage is locked
-            // Or better: locked = (amount * price) / leverage
-            // Remaining locked = ((amount - filled) * price) / leverage
+            // Futures use BCH as collateral/margin in our new architecture
+            assetToUnlock = 'BCH';
             const remaining = order.amount - (order.filled || 0);
-            const notional = remaining * order.price;
-            // Get leverage from order if stored?
-            // Order schema doesn't have leverage explicitly in migration 001?
-            // Wait, createOrderDto has it, but migration 001 didn't show leverage column in 'orders'.
-            // Oh, I missed that. 'orders' table migration 001 only has: symbol, side, type, variant, price, amount, filled, status.
-            // It lacks 'leverage'.
-            // If leverage is missing, Futures logic is broken anyway.
-            // I should ADD leverage to orders table in migration 002.
-            // For now, assume 1x or fix migration.
-            // Let's assume 1 for now to fix the code, but I need to fix schema.
-            amountToUnlock = notional;
+
+            if (order.margin) {
+                // Unlock the proportional amount of margin remaining
+                amountToUnlock = order.margin * (remaining / order.amount);
+            } else {
+                // Fallback calculation
+                const notional = remaining * (order.price || 0);
+                amountToUnlock = notional / (order.leverage || 1);
+            }
         }
 
         // 3. Unlock Funds
@@ -163,165 +191,171 @@ export class OrdersService {
         return data;
     }
 
-    // --- Matching Engine ---
+    // --- True Spot Matching Engine (P2P Orderbook) ---
 
     @Cron(CronExpression.EVERY_5_SECONDS)
     async matchOrders() {
         const admin = this.supabaseService.getAdminClient();
 
-        // 1. Fetch Open Orders
+        // 1. Fetch Open or Partial Orders (Spot Only for now)
         const { data: orders, error } = await admin
             .from('orders')
             .select('*')
-            .eq('status', 'open');
+            .in('status', ['open', 'partial'])
+            .eq('variant', 'spot');
 
         if (error || !orders || orders.length === 0) return;
 
-        // 2. Group by Pair (ChainId:PairAddress) to optimize API calls
-        // Map Key: "chainId:pairAddress" or "symbol"
-        const uniqueKeys = new Set<string>();
+        // 2. Group by Pair (ChainId:PairAddress or Symbol) and Demo Status
+        // We MUST segregate Demo vs Live orders
+        const orderbooks: { [key: string]: any[] } = {};
+
         orders.forEach(o => {
-            if (o.chain_id && o.pair_address) {
-                uniqueKeys.add(`${o.chain_id}:${o.pair_address}`);
-            }
+            // Group key identifies the exact market and environment
+            const key = `${o.symbol}_${o.is_demo ? 'demo' : 'live'}`;
+            if (!orderbooks[key]) orderbooks[key] = [];
+            orderbooks[key].push(o);
         });
 
-        // 3. Fetch Prices
-        const priceMap = new Map<string, number>(); // Key -> USD Price
+        // 3. Process each Orderbook
+        for (const key in orderbooks) {
+            const bookOrders = orderbooks[key];
 
-        for (const key of uniqueKeys) {
-            const [chainId, pairAddress] = key.split(':');
-            try {
-                // Fetch from DexScreener Proxy
-                const pairData = await this.proxyService.getDexScreenerPair(chainId, pairAddress);
-                if (pairData && pairData.priceUsd) {
-                    priceMap.set(key, parseFloat(pairData.priceUsd));
+            // Segregate Bids (Buys) and Asks (Sells)
+            const bids = bookOrders.filter(o => o.side === 'buy');
+            const asks = bookOrders.filter(o => o.side === 'sell');
+
+            // Sort Bids: Highest Price First. Ties broken by older created_at. Market orders (price null or 0) treated as Infinity.
+            bids.sort((a, b) => {
+                const priceA = (a.type === 'market' || !a.price) ? Infinity : a.price;
+                const priceB = (b.type === 'market' || !b.price) ? Infinity : b.price;
+                if (priceA > priceB) return -1;
+                if (priceA < priceB) return 1;
+                return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+            });
+
+            // Sort Asks: Lowest Price First. Ties broken by older created_at. Market orders treated as 0.
+            asks.sort((a, b) => {
+                const priceA = (a.type === 'market' || !a.price) ? 0 : a.price;
+                const priceB = (b.type === 'market' || !b.price) ? 0 : b.price;
+                if (priceA < priceB) return -1;
+                if (priceA > priceB) return 1;
+                return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+            });
+
+            // 4. Matching Loop Strategy
+            let bidIdx = 0;
+            let askIdx = 0;
+
+            while (bidIdx < bids.length && askIdx < asks.length) {
+                const bid = bids[bidIdx];
+                const ask = asks[askIdx];
+
+                const bidPrice = (bid.type === 'market' || !bid.price) ? Infinity : bid.price;
+                const askPrice = (ask.type === 'market' || !ask.price) ? 0 : ask.price;
+
+                // Stop matching if highest bid is lower than lowest ask
+                if (bidPrice < askPrice) {
+                    break;
                 }
-            } catch (e) {
-                this.logger.error(`Failed to fetch price for ${key}: ${e.message}`);
-            }
-        }
 
-        // 4. Match Logic
-        for (const order of orders) {
-            let currentPrice = 0;
+                // MATCH FOUND!
+                const remainingBid = bid.amount - (bid.filled || 0);
+                const remainingAsk = ask.amount - (ask.filled || 0);
 
-            // Resolve Price
-            if (order.chain_id && order.pair_address) {
-                currentPrice = priceMap.get(`${order.chain_id}:${order.pair_address}`) || 0;
-            } else {
-                // Fallback or skip if we don't support simple symbol matching yet
-                // For backend demo, we strictly require chain_id/pair_address for now
-                continue;
-            }
+                const matchSize = Math.min(remainingBid, remainingAsk);
 
-            if (currentPrice <= 0) continue;
+                // Determine Execution Price
+                // Rule: If Limit vs Limit, Maker's price dictates.
+                // If Market vs Limit, Limit price dictates.
+                // If Market vs Market, we technically need an Oracle (DexScreener). For now, we fallback to a simple average or Oracle.
+                let executionPrice = 0;
 
-            const isBuy = order.side === 'buy';
-            // Limit Order Logic
-            // Buy: Market Price <= Limit Price
-            // Sell: Market Price >= Limit Price
-            let shouldExecute = false;
-            if (isBuy && currentPrice <= order.price) shouldExecute = true;
-            if (!isBuy && currentPrice >= order.price) shouldExecute = true;
+                if (bid.type === 'market' && ask.type === 'market') {
+                    // Fallback to Oracle. If we can't reliably get Oracle synchronously here, we might skip or use last price.
+                    // For pure on-chain or demo, we should fetch oracle.
+                    // Doing a quick fetch if needed:
+                    try {
+                        const pairData = await this.proxyService.getDexScreenerPair(bid.chain_id, bid.pair_address);
+                        executionPrice = pairData?.priceUsd ? parseFloat(pairData.priceUsd) : 0;
+                    } catch (e) { executionPrice = 0; }
 
-            if (shouldExecute) {
-                await this.executeTrade(order, currentPrice);
+                    if (executionPrice === 0) {
+                        this.logger.warn(`Cannot cross Market vs Market without Oracle price. Skipping.`);
+                        break;
+                    }
+                } else if (bid.type === 'market') {
+                    executionPrice = ask.price;
+                } else if (ask.type === 'market') {
+                    executionPrice = bid.price;
+                } else {
+                    // Limit vs Limit: Maker is the older order
+                    const bidTime = new Date(bid.created_at).getTime();
+                    const askTime = new Date(ask.created_at).getTime();
+                    executionPrice = (bidTime <= askTime) ? bid.price : ask.price;
+                }
+
+                // 5. Execute the Match mathematically
+                await this.processMatch(bid, ask, matchSize, executionPrice);
+
+                // 6. Update local state to continue loop
+                bid.filled = (bid.filled || 0) + matchSize;
+                ask.filled = (ask.filled || 0) + matchSize;
+
+                if (bid.filled >= bid.amount) bidIdx++;
+                if (ask.filled >= ask.amount) askIdx++;
             }
         }
     }
 
-    private async executeTrade(order: any, executionPrice: number) {
-        this.logger.log(`Executing Order ${order.id}: ${order.side} ${order.symbol} @ ${executionPrice} [Demo: ${order.is_demo}]`);
+    private async processMatch(bid: any, ask: any, matchSize: number, executionPrice: number) {
+        this.logger.log(`Matching ${matchSize} ${bid.symbol} @ ${executionPrice} [Bid: ${bid.id}, Ask: ${ask.id}]`);
         const admin = this.supabaseService.getAdminClient();
-        const userId = order.user_id;
-        const isDemo = order.is_demo;
+        const isDemo = bid.is_demo; // Both are guaranteed to match based on our grouping
 
-        // Calculate settled amounts
-        // Spot: 
-        // Buy: Debit Quote (Locked), Credit Base
-        // Sell: Debit Base (Locked), Credit Quote
+        const [base, quote] = bid.symbol.split('/'); // e.g., PEPE/BCH. Base = PEPE, Quote = BCH
 
-        const [base, quote] = order.symbol.split('/');
+        // === SETTLE BUYER (BID) ===
+        // Buyer locked Quote based on their Limit price (or Oracle estimate if Market).
+        // They receive Base (matchSize).
+        // They pay (matchSize * executionPrice) in Quote.
+        // If they locked using a higher Limit price, they get a surplus refund.
 
-        let debitAsset = '';
-        let debitAmount = 0; // Amount locked that matches the trade
-        let creditAsset = '';
-        let creditAmount = 0;
+        const buyerQuoteCost = matchSize * executionPrice;
+        const buyerQuoteLocked = bid.type === 'market' ? buyerQuoteCost : matchSize * bid.price; // Approximation, we actually locked amount*price initially.
 
-        if (order.side === 'buy') {
-            // BUY: We locked Quote. We give Base.
-            // Locked Amount was: OrderAmount * OrderPrice
-            // Actual Cost is: OrderAmount * ExecutionPrice
-            // Difference is refunded?
-            // For simplicity: We use the full locked amount or we recalculate.
-            // Broker Model: We execute at Order Price (Limit) or Better.
-            // If Execution < OrderPrice, user saves difference (surplus).
+        // Transfer: Deduct locked Quote, Add available Base
+        await this.balancesService.processTrade(bid.user_id, quote, buyerQuoteCost, base, matchSize, isDemo);
 
-            debitAsset = quote;
-            const fullLocked = order.amount * order.price;
-
-            // Limit Order Logic:
-            // We lock based on Limit Price.
-            // We execute at Market Price (which is lower/better).
-            // Debit = Full Locked Amount (we consume the lock).
-            // Credit = Amount Bought.
-            // Surplus = (LimitPrice - ExecutionPrice) * Amount -> Refunded to Quote Available.
-
-            debitAmount = fullLocked;
-            creditAsset = base;
-            creditAmount = order.amount; // 100% fill
-
-            // Surplus refund handled below
-        } else {
-            // SELL: We locked Base. We give Quote.
-            debitAsset = base;
-            debitAmount = order.amount;
-
-            creditAsset = quote;
-            creditAmount = order.amount * executionPrice;
-        }
-
-        try {
-            // 1. Execute Balance Transfer
-            // processTrade(userId, debitSymbol, debitAmount, creditSymbol, creditAmount)
-            // Note: Our BalancesService.processTrade is simple. It debits locked.
-            // processTrade(..., isDemo)
-            await this.balancesService.processTrade(userId, debitAsset, debitAmount, creditAsset, creditAmount, isDemo);
-
-            // 1b. Handle Surplus (For Buy orders where Price < Limit)
-            if (order.side === 'buy' && executionPrice < order.price) {
-                const surplus = (order.price - executionPrice) * order.amount;
-                if (surplus > 0) {
-                    // Unlock/Refund surplus
-                    // We already debited 'debitAmount' (full locked) in processTrade?
-                    // Wait, processTrade debits `debitBal.locked - debitAmount`.
-                    // So we just need to add `surplus` to `available`.
-                    // We can reuse 'processTrade' with 0 debit? Or separate unlock.
-                    // Or just update balance directly.
-                    // Let's use `balancesService.unlockFunds`?? No, that moves Locked->Available.
-                    // But we already spent(burned) the locked funds in processTrade.
-                    // So we need to `credit` the surplus.
-                    // We can use processTrade(..., 0, quote, surplus).
-                    // We treat this as a "trade" where we debit 0 and credit surplus to available
-                    await this.balancesService.processTrade(userId, debitAsset, 0, debitAsset, surplus, isDemo);
-                }
+        // Refund Surplus if execution price was better (lower) than Limit price
+        if (bid.type === 'limit' && executionPrice < bid.price) {
+            const surplus = (bid.price - executionPrice) * matchSize;
+            if (surplus > 0) {
+                // Unlock surplus back to available (Credit Quote, debit 0)
+                await this.balancesService.processTrade(bid.user_id, quote, 0, quote, surplus, isDemo);
             }
-
-            // 2. Update Order
-            await admin
-                .from('orders')
-                .update({
-                    status: 'filled',
-                    filled: order.amount, // Full fill
-                    updated_at: new Date()
-                })
-                .eq('id', order.id);
-
-            this.logger.log(`Order ${order.id} Filled Completely`);
-
-        } catch (e) {
-            this.logger.error(`Failed to execute trade ${order.id}: ${e.message}`);
         }
+
+        // === SETTLE SELLER (ASK) ===
+        // Seller locked Base (matchSize).
+        // They receive Quote (matchSize * executionPrice).
+
+        await this.balancesService.processTrade(ask.user_id, base, matchSize, quote, buyerQuoteCost, isDemo);
+
+        // === UPDATE STATUSES ===
+        // We update the DB for both orders
+        const updateOrderStatus = async (order: any) => {
+            const newFilled = (order.filled || 0) + matchSize; // We use the DB's previous state + new match to be safe, but we also tracked it in memory
+            const status = newFilled >= order.amount ? 'filled' : 'partial';
+
+            await admin.from('orders').update({
+                filled: newFilled,
+                status: status,
+                updated_at: new Date()
+            }).eq('id', order.id);
+        };
+
+        await updateOrderStatus(bid);
+        await updateOrderStatus(ask);
     }
 }

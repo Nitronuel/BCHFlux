@@ -10,11 +10,11 @@ const LeverageWallet: React.FC = () => {
     const navigate = useNavigate();
     const { addToast } = useUiStore();
     const [showBalance, setShowBalance] = useState(true);
-    const { leverageBalances, positions } = useUserStore();
+    const { balances, positions } = useUserStore();
     const { markets } = useMarketStore();
 
     // Calculate Leverage Metrics (BCH Collateral)
-    const bchBalance = leverageBalances['BCH'] || { available: 0, locked: 0 };
+    const leverageBal = balances['BCH'] || { available: 0, locked: 0 };
     const bchPrice = markets.find(m => m.symbol.toUpperCase() === 'BCH')?.current_price || 0;
 
     // Total Margin & PnL in USD (approx) 
@@ -45,7 +45,7 @@ const LeverageWallet: React.FC = () => {
     const totalUnrealizedPnLUSD = positions.reduce((sum, p) => sum + p.unrealizedPnL, 0);
     const totalUnrealizedPnLBCH = bchPrice > 0 ? totalUnrealizedPnLUSD / bchPrice : 0;
 
-    const availableBCH = bchBalance.available; // This is purely what's in the wallet
+    const availableBCH = leverageBal.available; // This is purely what's in the wallet
     const walletBalanceBCH = availableBCH + totalMarginBCH + totalUnrealizedPnLBCH;
 
     const walletBalanceUSD = walletBalanceBCH * bchPrice;
@@ -57,7 +57,7 @@ const LeverageWallet: React.FC = () => {
             walletBalance: walletBalanceBCH,
             unrealizedPnl: totalUnrealizedPnLBCH,
             marginBalance: totalMarginBCH,
-            available: availableBCH
+            available: leverageBal.available
         },
     ];
 
@@ -182,7 +182,7 @@ const LeverageWallet: React.FC = () => {
                         >
                             <div className="flex justify-between items-center mb-2">
                                 <span className="font-bold text-text-primary">{asset.asset}</span>
-                                <span className="text-sm font-medium">{asset.walletBalance.toFixed(4)}</span>
+                                <span className="text-sm font-medium">{balances[asset.asset]?.available.toFixed(4) || '0.0000'}</span>
                             </div>
                             <div className="flex justify-between text-xs text-text-secondary">
                                 <span>Margin Bal.</span>

@@ -97,6 +97,18 @@ export class AppController {
         is_demo: false
       });
 
+    // 3. Ensure Demo Balances
+    // Give them 10 BCH for Demo mode
+    await admin
+      .from('balances')
+      .upsert({
+        user_id: user.id,
+        token_symbol: 'BCH',
+        available: 10,
+        locked: 0,
+        is_demo: true
+      });
+
     return { userId: user.id, email };
   }
 }

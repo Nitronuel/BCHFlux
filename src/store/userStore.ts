@@ -29,13 +29,16 @@ export interface Order {
     triggerCondition?: 'Above' | 'Below';
     chainId?: string;
     pairAddress?: string;
+    margin?: number;         // For futures 
+    liquidationPrice?: number; // For futures
 }
 
 export interface Position {
     id: string;
     symbol: string;
-    side: 'Long' | 'Short';
     size: number;
+    borrowedAmount: number;
+    accruedInterest: number;
     entryPrice: number;
     margin: number;
     leverage: number;
@@ -59,9 +62,7 @@ const DEMO_BALANCES: Record<string, Balance> = {
     'USDT': { available: 1000, locked: 0 },
 };
 
-const DEMO_LEVERAGE_BALANCES: Record<string, Balance> = {
-    'BCH': { available: 10, locked: 0, averageBuyPrice: 350 },
-};
+
 
 interface UserState {
     userId: string | null;
@@ -71,7 +72,6 @@ interface UserState {
 
     // Balances
     balances: Record<string, Balance>;
-    leverageBalances: Record<string, Balance>;
 
     // Trading
     orders: Order[];
@@ -87,11 +87,12 @@ interface UserState {
 
     fetchBalances: () => Promise<void>;
     fetchOrders: () => Promise<void>;
+    fetchPositions: () => Promise<void>;
     addOrder: (order: Order) => Promise<boolean>;
     cancelOrder: (orderId: string) => Promise<void>;
     fillOrder: (orderId: string, fillPrice: number, fillAmount: number) => void;
     openPosition: (position: Omit<Position, 'id' | 'timestamp' | 'unrealizedPnL' | 'roe'>) => boolean;
-    closePosition: (positionId: string, closePrice: number, collateralPrice?: number) => void;
+    closePosition: (positionId: string, closePrice?: number, collateralPrice?: number) => Promise<void>;
     updatePositionSL: (positionId: string, sl: number) => void;
     updatePositionTP: (positionId: string, tp: number) => void;
     updateBalance: (symbol: string, amount: number) => void;
@@ -123,7 +124,6 @@ export const useUserStore = create<UserState>()(
 
             // Initial Balances (Demo Mode by default)
             balances: { ...DEMO_BALANCES },
-            leverageBalances: { ...DEMO_LEVERAGE_BALANCES },
 
             /**
              * Set account mode: 'demo' or 'real'
@@ -135,7 +135,6 @@ export const useUserStore = create<UserState>()(
                     set({
                         accountMode: 'demo',
                         balances: { ...DEMO_BALANCES },
-                        leverageBalances: { ...DEMO_LEVERAGE_BALANCES },
                         orders: [],
                         positions: [],
                     });
@@ -144,9 +143,6 @@ export const useUserStore = create<UserState>()(
                     set({
                         accountMode: 'real',
                         balances: {
-                            'BCH': { available: 0, locked: 0 },
-                        },
-                        leverageBalances: {
                             'BCH': { available: 0, locked: 0 },
                         },
                         orders: [],
@@ -160,8 +156,12 @@ export const useUserStore = create<UserState>()(
              * Only updates BCH in the balances — called from balance polling.
              */
             syncRealBalance: (bch: number, usdValue: number) => {
-                const { accountMode } = get();
+                const { accountMode, userId } = get();
                 if (accountMode !== 'real') return;
+
+                if (userId) {
+                    apiClient.post('/api/balances/sync', { userId, symbol: 'BCH', amount: bch }).catch(console.error);
+                }
 
                 set((state) => ({
                     balances: {
@@ -243,6 +243,20 @@ export const useUserStore = create<UserState>()(
                 }
             },
 
+            fetchPositions: async () => {
+                const { userId, accountMode } = get();
+                if (!userId) return;
+
+                try {
+                    const res = await apiClient.get(`/api/futures/positions?userId=${userId}&isDemo=${accountMode === 'demo'}`);
+                    if (res.data) {
+                        set({ positions: res.data });
+                    }
+                } catch (e) {
+                    console.error('Failed to fetch positions', e);
+                }
+            },
+
             addOrder: async (order: Order) => {
                 const { accountMode, userId } = get();
                 if (!userId) return false;
@@ -251,19 +265,24 @@ export const useUserStore = create<UserState>()(
                     await apiClient.post('/api/orders', {
                         ...order,
                         userId,
+                        type: order.type.toLowerCase(), // Backend valid expects "market" or "limit"
                         variant: order.variant || 'spot',
                         chainId: order.chainId,
                         pairAddress: order.pairAddress,
                         isDemo: accountMode === 'demo'
                     });
                     await get().fetchOrders();
+                    if (order.variant === 'futures') {
+                        await get().fetchPositions();
+                    }
                     if (accountMode === 'demo') {
                         await get().fetchBalances();
                     }
                     return true;
-                } catch (e) {
-                    console.error('Order Failed:', e);
-                    return false;
+                } catch (e: any) {
+                    const errorMsg = e.response?.data?.message || e.message || 'Unknown error';
+                    console.error('Order Failed:', errorMsg);
+                    return errorMsg; // Return string instead of false
                 }
             },
 
@@ -349,7 +368,7 @@ export const useUserStore = create<UserState>()(
             }),
 
             openPosition: (positionData) => {
-                const { balances, leverageBalances, positions } = get();
+                const { balances, positions } = get();
 
                 const isFutures = true;
                 const collateralAsset = isFutures ? 'BCH' : 'USDT';
@@ -357,7 +376,7 @@ export const useUserStore = create<UserState>()(
                 const notionalUSD = positionData.entryPrice * positionData.size;
                 const marginUSD = notionalUSD / positionData.leverage;
 
-                const targetBalances = isFutures ? leverageBalances : balances;
+                const targetBalances = balances;
                 const currentBal = targetBalances[collateralAsset] || { available: 0, locked: 0 };
 
                 let marginRequiredToken = 0;
@@ -377,6 +396,8 @@ export const useUserStore = create<UserState>()(
                     timestamp: Date.now(),
                     unrealizedPnL: 0,
                     roe: 0,
+                    borrowedAmount: marginRequiredToken * positionData.leverage - marginRequiredToken,
+                    accruedInterest: 0,
                     collateralSymbol: collateralAsset,
                     entryCollateralPrice: positionData.entryCollateralPrice
                 };
@@ -392,56 +413,25 @@ export const useUserStore = create<UserState>()(
 
                 set(() => ({
                     positions: [newPosition, ...positions],
-                    ...(isFutures ? { leverageBalances: newTargetBalances } : { balances: newTargetBalances })
+                    balances: newTargetBalances
                 }));
                 return true;
             },
 
-            closePosition: (positionId: string, closePrice: number) => set((state) => {
-                const position = state.positions.find(p => p.id === positionId);
-                if (!position) return state;
+            closePosition: async (positionId: string) => {
+                const { userId } = get();
+                if (!userId) return;
 
-                let pnlUSD = 0;
-                if (position.side === 'Long') {
-                    pnlUSD = (closePrice - position.entryPrice) * position.size;
-                } else {
-                    pnlUSD = (position.entryPrice - closePrice) * position.size;
+                try {
+                    await apiClient.post('/api/futures/close', { userId, positionId });
+                    await get().fetchPositions();
+                    await get().fetchBalances();
+                } catch (e) {
+                    console.error('Failed to close position', e);
+                    // You might want to trigger a toast error here by importing useUiStore, 
+                    // but for simplicity we'll just log it.
                 }
-
-                const collateralAsset = position.collateralSymbol || 'USDT';
-                const isFutures = collateralAsset === 'BCH';
-                const targetBalances = isFutures ? state.leverageBalances : state.balances;
-
-                const bal = targetBalances[collateralAsset] || { available: 0, locked: 0 };
-                let payout = 0;
-
-                if (collateralAsset === 'BCH') {
-                    let bchPrice = 0;
-                    if (position.symbol.includes('BCH')) {
-                        bchPrice = closePrice;
-                    } else {
-                        bchPrice = 400;
-                    }
-                    const pnlBCH = bchPrice > 0 ? pnlUSD / bchPrice : 0;
-                    payout = position.margin + pnlBCH;
-                } else {
-                    payout = position.margin + pnlUSD;
-                }
-
-                const newTargetBalances = {
-                    ...targetBalances,
-                    [collateralAsset]: {
-                        ...bal,
-                        available: Math.max(0, bal.available + payout),
-                        locked: Math.max(0, bal.locked - position.margin)
-                    }
-                };
-
-                return {
-                    positions: state.positions.filter(p => p.id !== positionId),
-                    ...(isFutures ? { leverageBalances: newTargetBalances } : { balances: newTargetBalances })
-                };
-            }),
+            },
 
             updatePositionSL: (positionId: string, sl: number) => set((state) => ({
                 positions: state.positions.map(p =>
@@ -481,12 +471,8 @@ export const useUserStore = create<UserState>()(
                         if (!market) return pos;
 
                         const markPrice = market.current_price;
-                        let pnl = 0;
-                        if (pos.side === 'Long') {
-                            pnl = (markPrice - pos.entryPrice) * pos.size;
-                        } else {
-                            pnl = (pos.entryPrice - markPrice) * pos.size;
-                        }
+                        // Long-Only
+                        let pnl = (markPrice - pos.entryPrice) * pos.size;
 
                         const roe = (pnl / pos.margin) * 100;
 
@@ -511,16 +497,6 @@ export const useUserStore = create<UserState>()(
                         if (hasNegative) {
                             console.warn('[UserStore] Repaired negative balances');
                             useUserStore.setState({ balances: repairedBalances });
-                        }
-                    }
-                    if (state.leverageBalances) {
-                        const repairedLeverage = repairBalances(state.leverageBalances);
-                        const hasNegativeLev = Object.entries(state.leverageBalances).some(
-                            ([, bal]) => bal.available < 0 || bal.locked < 0
-                        );
-                        if (hasNegativeLev) {
-                            console.warn('[UserStore] Repaired negative leverage balances');
-                            useUserStore.setState({ leverageBalances: repairedLeverage });
                         }
                     }
                 }

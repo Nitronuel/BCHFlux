@@ -150,6 +150,8 @@ const FuturesTradePage: React.FC = () => {
                             currentPrice={price}
                             baseSymbol={symbol.toUpperCase()}
                             quoteSymbol="USDT"
+                            chainId={currentMarket?.chainId}
+                            pairAddress={currentMarket?.pairAddress}
                         />
                     </div>
                 </div>
@@ -195,6 +197,8 @@ const FuturesTradePage: React.FC = () => {
                         currentPrice={price}
                         baseSymbol={symbol.toUpperCase()}
                         quoteSymbol="USDT"
+                        chainId={currentMarket?.chainId}
+                        pairAddress={currentMarket?.pairAddress}
                     />
 
                     <div className="p-4 border-t border-border mt-auto hidden lg:block">

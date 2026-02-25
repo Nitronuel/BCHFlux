@@ -47,7 +47,13 @@ export class ProxyService {
 
         try {
             const url = `${this.DEXSCREENER_BASE}/pairs/${chainId}/${pairAddress}`;
-            const response = await axios.get(url, { timeout: 10000 });
+            const response = await axios.get(url, {
+                timeout: 10000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json'
+                }
+            });
             this.setCache(cacheKey, response.data);
             return response.data;
         } catch (error) {
@@ -72,7 +78,13 @@ export class ProxyService {
 
         try {
             const url = `${this.DEXSCREENER_BASE}/tokens/${tokenAddress}`;
-            const response = await axios.get(url, { timeout: 10000 });
+            const response = await axios.get(url, {
+                timeout: 10000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json'
+                }
+            });
             this.setCache(cacheKey, response.data);
             return response.data;
         } catch (error) {
@@ -148,7 +160,13 @@ export class ProxyService {
     async searchDexScreener(query: string) {
         try {
             const url = `${this.DEXSCREENER_BASE}/search?q=${encodeURIComponent(query)}`;
-            const response = await axios.get(url, { timeout: 10000 });
+            const response = await axios.get(url, {
+                timeout: 10000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json'
+                }
+            });
             return response.data;
         } catch (error) {
             console.error('[ProxyService] DexScreener search error:', (error as Error).message);

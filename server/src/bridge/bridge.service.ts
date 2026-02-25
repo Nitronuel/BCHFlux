@@ -23,11 +23,10 @@ export class BridgeService {
     /**
      * Get a quote for swapping BCH -> Token
      */
-    async getQuote(fromAmount: number, toToken: string, toChain: string) {
-        this.logger.log(`Getting quote from Rango: ${fromAmount} BCH -> ${toToken} (${toChain})`);
+    async getQuote(fromAmount: number, toToken: string, toChain: string, isDemo: boolean = false) {
+        this.logger.log(`Getting quote from Rango: ${fromAmount} BCH -> ${toToken} (${toChain}) [isDemo: ${isDemo}]`);
 
         try {
-            // 1. Construct Rango Request
             const fromBlockchain = 'BCH';
             const fromSymbol = 'BCH';
             const toBlockchain = toChain;
@@ -37,13 +36,10 @@ export class BridgeService {
             const tokenKey = `${toChain}.${toToken}`;
             const tokenAddress = this.TOKEN_MAP[tokenKey] || null;
 
-            // If it's a known token type that likely needs address but isn't in map, log warning
-            if (!tokenAddress && !['BCH', 'SOL', 'ETH', 'BNB'].includes(toToken)) {
-                this.logger.warn(`Potential missing address for ${tokenKey}. Rango might reject this.`);
-            }
+            // Dummy wallets for routing quote check (Rango requires these to validate route)
+            const dummyBCH = 'qqtnmek6jddmh4f3gtzxzsgy2flxs5syhuw8062hft'; // Standard CashAddr without bitcoincash:
+            const dummyDest = toChain === 'SOLANA' ? '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R' : '0x1234567890123456789012345678901234567890';
 
-            // Format: CHAIN.TOKEN (or just CHAIN for native)
-            // Rango expects: { blockchain: 'BCH', symbol: 'BCH', address: null }
             const requestBody = {
                 from: { blockchain: fromBlockchain, symbol: fromSymbol, address: null },
                 to: {
@@ -52,8 +48,16 @@ export class BridgeService {
                     address: tokenAddress // Pass address if known (Required for Tokens)
                 },
                 amount: fromAmount.toString(),
-                // swapperGroups: ['BCH'], // REMOVED: potentially too restrictive
-                slippage: 3.0 // 3% slippage tolerance
+                slippage: 3.0, // 3% slippage tolerance
+                checkPrerequisites: false,
+                selectedWallets: {
+                    [fromBlockchain]: dummyBCH,
+                    [toBlockchain]: dummyDest
+                },
+                connectedWallets: [
+                    { blockchain: fromBlockchain, addresses: [dummyBCH] },
+                    { blockchain: toBlockchain, addresses: [dummyDest] }
+                ]
             };
 
             // 2. Call Rango API
@@ -65,71 +69,122 @@ export class BridgeService {
             const data = response.data;
 
             if (!data || !data.result || !data.result.outputAmount) {
-                this.logger.warn('Rango returned no route:', JSON.stringify(data));
+                this.logger.warn('Rango returned no route (upstream limitation), falling back to mock quote.');
                 throw new Error('No route found for this swap.');
             }
 
             const route = data.result;
             this.logger.log(`Rango Route Found: ${route.outputAmount} ${toToken} via ${route.swaps?.[0]?.swapperId} `);
 
-            // 3. Extract Bridge Details
-            // IMPORTANT: For the demo to work without a connected wallet status on backend,
-            // we are generating the "Quote" which effectively guides the user options.
-            // However, Rango usuall requires 'create-transaction' to get the exact Memo.
-            // For now, if the route provides a 'swapperId' like 'THORCHAIN', we might be able to infer,
-            // but for correctness, we'll try to use the simulation data if available, OR
-            // we will need to perform a second call to 'create-transaction' using a placeholder address if needed.
-
-            // Fallback/Placeholder Logic for Transaction Construction until we do the full 2-step flow:
-            // If Rango returns a route, it means liquidity exists.
-            // We'll trust the Rate.
-
-            // Mocking the "Memo" part for the specific Phase 4 Step 1 (Get Quote logic),
-            // but we really need the real memo for it to work on-chain.
-            // Let's assume for this step we want the REAL RATE first.
-
-            // To make this functional for the User's "Swap" click, we need a valid destination address + Memo.
-            // Since we don't have the user's address here, we can't fully construct the TX yet via Rango API.
-            // STRATEGY: We will return the Rango Quote for the UI numbers, 
-            // but keep the Mock Transaction data for the "Swap" button for now, 
-            // UNLESS we want to try to generate a transaction with a dummy address.
-
-            // Let's implement the Real Rate first, and keep the Mock TX parameters (Demo Mode) safe,
-            // or if the user wants "Real Integration", we should try to do it right.
-
-            // Let's try to get the real transaction data using a dummy BCH address if possible.
-            // But Rango might reject dummy addresses.
-
-            // For this specific iteration:
-            // 1. Return REAL Market Data (Amount Out, Fee).
-            // 2. Return a valid-looking Memo (simulated or real if possible).
-
-            const bridgeAddress = 'bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a'; // Keep our "Bridge" address for safety
-            const memo = `RANGO:${toChain}:${toToken}: DEST_ADDR`; // Placeholder Memo
-
+            // Return the initial quote data, including the requestId needed for create-transaction
             return {
-                quoteId: route.requestId,
+                quoteId: data.requestId, // VERY IMPORTANT for the next step, use data.requestId not route.requestId
                 from: 'BCH',
                 to: toToken,
                 amountIn: fromAmount,
                 amountOut: parseFloat(route.outputAmount),
-                bridgeFee: route.fee ? parseFloat(route.fee.amount) : 0.0001, // Try to parse real fee if available
-                tx: {
-                    to: bridgeAddress,
-                    value: fromAmount,
-                    memo: memo,
-                    opReturn: {
-                        data: [memo], // Array format for mainnet-js
-                    }
-                }
+                bridgeFee: route.fee ? parseFloat(route.fee.amount) : 0.0001,
             };
 
         } catch (error) {
-            this.logger.error('Rango API Failed:', error.response?.data || error.message);
+            this.logger.error('Rango API Failed or No Route:', error.response?.data || error.message);
 
-            // Fallback to Mock if API fails (so app doesn't break during demo)
-            this.logger.warn('Falling back to mock quote due to API failure.');
-            return this.getMockQuote(fromAmount, toToken, toChain);
+            if (isDemo) {
+                this.logger.warn('Falling back to mock quote due to API failure in Demo Mode.');
+                return this.getMockQuote(fromAmount, toToken, toChain);
+            } else {
+                this.logger.error('Live mode: Failing explicitly as no route is available.');
+                throw new HttpException(
+                    error.message || 'Cross-chain bridging for this asset is temporarily unavailable upstream.',
+                    HttpStatus.SERVICE_UNAVAILABLE
+                );
+            }
+        }
+    }
+
+    /**
+     * Step 2: Create Transaction
+     * Takes the requestId from the quote and the user's destination address to get the actual tx payload.
+     */
+    async createTransaction(requestId: string, userWalletAddress: string, isDemo: boolean = false) {
+        this.logger.log(`Creating Rango Transaction for request: ${requestId}, dest: ${userWalletAddress} [isDemo: ${isDemo}]`);
+
+        try {
+            // Prevent attempting to call Rango API with our fallback mock quote ID
+            if (requestId && requestId.startsWith('mock-')) {
+                this.logger.warn("Mock quote ID detected. Bypassing Rango API for transaction creation.");
+                return this.getMockTransaction();
+            }
+
+            // Using dummy source to match Quote requirements
+            const dummyBCH = 'qqtnmek6jddmh4f3gtzxzsgy2flxs5syhuw8062hft';
+
+            const requestBody = {
+                requestId: requestId,
+                step: 1,
+                userSettings: {
+                    slippage: "3.0"
+                },
+                validations: {
+                    balance: "false",
+                    fee: "false",
+                    approve: "false"
+                },
+                wallets: [
+                    { blockchain: "BCH", address: dummyBCH },
+                    // Rango usually infers the destination chain from the quote, just pass the address:
+                    { blockchain: "SOLANA", address: userWalletAddress }, // Hacky but Rango accepts it if we just provide wallets array
+                    { blockchain: "ETH", address: userWalletAddress },
+                    { blockchain: "BSC", address: userWalletAddress }
+                ],
+                // Rango v2 api might prefer destinationWallets explicitly for multi-routing
+                destinationWallets: [
+                    {
+                        address: userWalletAddress,
+                    }
+                ]
+            };
+
+            const response = await axios.post(`${this.BASE_URL}/tx/create`, requestBody, {
+                headers: { 'x-api-key': this.RANGO_API_KEY }
+            });
+
+            const data = response.data;
+
+            if (!data || !data.ok || !data.transaction) {
+                this.logger.error('Rango create-transaction failed:', JSON.stringify(data));
+                throw new Error('Failed to create transaction payload.');
+            }
+
+            // Extract the transaction details
+            const txDetails = data.transaction;
+
+            if (txDetails.type !== 'TRANSFER') {
+                this.logger.warn(`Unexpected Rango TX Type: ${txDetails.type}. Expected TRANSFER for BCH.`);
+            }
+
+            return {
+                to: txDetails.to,
+                value: txDetails.amount || txDetails.value || 0,
+                memo: txDetails.memo,
+                opReturn: {
+                    data: [txDetails.memo]
+                },
+                raw: txDetails
+            };
+
+        } catch (error) {
+            this.logger.error('Rango create-transaction failed:', error.response?.data || error.message);
+
+            if (isDemo) {
+                this.logger.warn('Falling back to mock TX if API fails in Demo mode.');
+                return this.getMockTransaction();
+            } else {
+                throw new HttpException(
+                    'Failed to generate cross-chain transaction payload. Please try again later.',
+                    HttpStatus.SERVICE_UNAVAILABLE
+                );
+            }
         }
     }
 
@@ -146,22 +201,29 @@ export class BridgeService {
         };
         const rate = rates[toToken] || 100;
         const estimatedOutput = fromAmount * rate;
-        const memo = `RANGO:${toChain}:${toToken}: DEST_ADDR`;
-        const bridgeAddress = 'bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a';
 
         return {
-            quoteId: `mock - fallback - ${Date.now()} `,
+            quoteId: `mock-fallback-${Date.now()}`,
             from: 'BCH',
             to: toToken,
             amountIn: fromAmount,
             amountOut: estimatedOutput,
             bridgeFee: 0.0001,
-            tx: {
-                to: bridgeAddress,
-                value: fromAmount,
-                memo: memo,
-                opReturn: { data: [memo] }
-            }
+        };
+    }
+
+    /**
+     * Fallback Mock Transaction
+     */
+    private getMockTransaction() {
+        const memo = `MOCK:RANGO:DEST_ADDR`;
+        const bridgeAddress = 'bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a';
+
+        return {
+            to: bridgeAddress,
+            value: 0, // Mock, frontend knows amount
+            memo: memo,
+            opReturn: { data: [memo] }
         };
     }
 
@@ -176,4 +238,5 @@ export class BridgeService {
         };
     }
 }
+
 

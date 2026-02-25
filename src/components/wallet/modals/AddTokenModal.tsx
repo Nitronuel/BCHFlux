@@ -14,7 +14,7 @@ const AddTokenModal: React.FC<AddTokenModalProps> = ({ isOpen, onClose }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [foundToken, setFoundToken] = useState<MarketCoin | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [selectedNetwork, setSelectedNetwork] = useState('base'); // Default to Base for demo
+    const [selectedNetwork, setSelectedNetwork] = useState('bch'); // Default to BCH
 
     const { addCustomToken } = useMarketStore();
 
@@ -30,7 +30,24 @@ const AddTokenModal: React.FC<AddTokenModalProps> = ({ isOpen, onClose }) => {
                     if (token) {
                         setFoundToken(token);
                     } else {
-                        setError('Token not found on DexScreener. Check address and try again.');
+                        if (selectedNetwork === 'bch') {
+                            // Fallback for BCH CashTokens since DexScreener API doesn't index them consistently by ID
+                            setFoundToken({
+                                id: contractAddress,
+                                symbol: 'CASH',
+                                name: 'Custom CashToken',
+                                image: 'https://cryptologos.cc/logos/bitcoin-cash-bch-logo.png',
+                                current_price: 0.05,
+                                price_change_percentage_24h: 0,
+                                total_volume: 1000,
+                                market_cap: 100000,
+                                chainId: 'bch',
+                                pairAddress: contractAddress
+                            } as any);
+                            setError('Token not on DexScreener. Using mock data for local testing.');
+                        } else {
+                            setError('Token not found on DexScreener. Check address and try again.');
+                        }
                     }
                 } catch (err) {
                     setError('Failed to fetch token details.');
@@ -91,6 +108,7 @@ const AddTokenModal: React.FC<AddTokenModalProps> = ({ isOpen, onClose }) => {
                                     onChange={(e) => setSelectedNetwork(e.target.value)}
                                     className="w-full bg-background border border-border rounded-lg px-4 py-3 text-text-primary focus:border-primary outline-none appearance-none cursor-pointer hover:border-text-secondary transition-colors"
                                 >
+                                    <option value="bch">Bitcoin Cash (CashToken)</option>
                                     <option value="ethereum">Ethereum (ERC-20)</option>
                                     <option value="bsc">BNB Smart Chain (BEP-20)</option>
                                     <option value="solana">Solana</option>

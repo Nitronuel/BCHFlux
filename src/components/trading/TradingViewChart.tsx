@@ -104,6 +104,7 @@ const TradingViewChart: React.FC<TradingViewChartProps> = memo(({
         widgetDiv.style.width = '100%';
         widgetContainer.appendChild(widgetDiv);
 
+        if (!containerRef.current) return;
         containerRef.current.appendChild(widgetContainer);
         widgetContainerRef.current = widgetContainer;
 
@@ -112,6 +113,8 @@ const TradingViewChart: React.FC<TradingViewChartProps> = memo(({
         script.src = 'https://s3.tradingview.com/tv.js';
         script.async = true;
         script.onload = () => {
+            if (!containerRef.current || !widgetContainerRef.current) return;
+
             // @ts-expect-error TradingView is loaded globally
             if (typeof TradingView !== 'undefined') {
                 // @ts-expect-error TradingView widget

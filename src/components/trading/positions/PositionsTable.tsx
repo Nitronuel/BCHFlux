@@ -25,7 +25,7 @@ const PositionsTable: React.FC = () => {
             header: 'Symbol',
             accessor: (row) => (
                 <div className="flex items-center gap-2">
-                    <div className={`w-1 h-4 rounded-full ${row.side === 'Long' ? 'bg-buy' : 'bg-sell'}`}></div>
+                    <div className={`w-1 h-4 rounded-full bg-primary`}></div>
                     <span className="font-bold text-base">{row.symbol}</span>
                     <span className="text-xs bg-surface border border-border px-1 rounded text-text-secondary">{row.leverage}x</span>
                 </div>
@@ -35,8 +35,8 @@ const PositionsTable: React.FC = () => {
         {
             header: 'Size',
             accessor: (row) => (
-                <span className={row.side === 'Long' ? 'text-buy' : 'text-sell'}>
-                    {row.size} <span className="text-xs text-text-secondary">{row.symbol.split('/')[0]}</span>
+                <span className="text-primary">
+                    {row.size.toFixed(4)} <span className="text-xs text-text-secondary">{row.symbol.split('/')[0]}</span>
                 </span>
             ),
             className: 'w-[10%]'
@@ -52,18 +52,23 @@ const PositionsTable: React.FC = () => {
             className: 'w-[12%]'
         },
         {
-            header: 'Liq. Price',
-            accessor: (row) => <span className="text-orange-500">{row.liquidationPrice.toFixed(2)}</span>,
-            className: 'w-[12%]'
-        },
-        {
-            header: 'Margin',
+            header: 'Margin / Debt',
             accessor: (row) => (
-                <div>
-                    {row.margin.toFixed(2)} <span className="text-xs text-text-secondary">USDT</span>
+                <div className="flex flex-col">
+                    <div><span className="text-text-secondary w-12 inline-block text-xs">Margin:</span> {row.margin.toFixed(4)} <span className="text-xs text-text-secondary">BCH</span></div>
+                    <div><span className="text-text-secondary w-12 inline-block text-xs">Debt:</span> <span className="text-sell">${(row.borrowedAmount || 0).toFixed(2)}</span></div>
                 </div>
             ),
-            className: 'w-[10%]'
+            className: 'w-[15%]'
+        },
+        {
+            header: 'Interest',
+            accessor: (row) => (
+                <div className="text-sell">
+                    ${(row.accruedInterest || 0).toFixed(4)}
+                </div>
+            ),
+            className: 'w-[8%]'
         },
         {
             header: 'PNL (ROE %)',

@@ -43,6 +43,11 @@ const Header: React.FC = () => {
         setAccountMode('demo');
     };
 
+    const resetDev = () => {
+        localStorage.removeItem('user-storage-v5');
+        window.location.reload();
+    };
+
     return (
         <>
             <header className="fixed top-0 left-0 right-0 h-16 bg-surface border-b border-border z-50 flex items-center justify-between px-4 md:px-6">
@@ -76,8 +81,8 @@ const Header: React.FC = () => {
                         <button
                             onClick={() => handleModeSwitch('demo')}
                             className={`px-3 py-1 text-xs font-bold rounded-full transition-all ${accountMode === 'demo'
-                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                    : 'text-text-secondary hover:text-text-primary'
+                                ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                : 'text-text-secondary hover:text-text-primary'
                                 }`}
                         >
                             Demo
@@ -85,14 +90,25 @@ const Header: React.FC = () => {
                         <button
                             onClick={() => handleModeSwitch('real')}
                             className={`px-3 py-1 text-xs font-bold rounded-full transition-all ${accountMode === 'real'
-                                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                                    : 'text-text-secondary hover:text-text-primary'
+                                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                : 'text-text-secondary hover:text-text-primary'
                                 }`}
                             title={!isConnected ? 'Connect wallet to go live' : 'Switch to real wallet'}
                         >
                             Live
                         </button>
                     </div>
+
+                    {/* Reset Demo Button */}
+                    {accountMode === 'demo' && (
+                        <button
+                            onClick={resetDev}
+                            className="hidden md:flex items-center px-3 py-1 text-xs font-bold rounded-full bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/30 transition-all"
+                            title="Reset Demo Account to get 10 BCH"
+                        >
+                            Reset
+                        </button>
+                    )}
 
                     {/* Connect Wallet Button */}
                     {isConnected && address ? (
@@ -107,6 +123,13 @@ const Header: React.FC = () => {
                                 title="Disconnect"
                             >
                                 {formatAddress(address)}
+                            </button>
+                            <button
+                                onClick={resetDev}
+                                className="px-3 py-1.5 rounded-full text-xs font-medium text-white bg-red-500 hover:bg-red-600 transition-colors"
+                                title="Reset Demo Account to get 10 BCH"
+                            >
+                                Reset Demo
                             </button>
                         </div>
                     ) : (

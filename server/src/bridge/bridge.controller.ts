@@ -6,8 +6,13 @@ export class BridgeController {
     constructor(private readonly bridgeService: BridgeService) { }
 
     @Post('quote')
-    async getQuote(@Body() body: { amount: number; toToken: string; toChain: string }) {
-        return this.bridgeService.getQuote(body.amount, body.toToken, body.toChain);
+    async getQuote(@Body() body: { amount: number; toToken: string; toChain: string; isDemo?: boolean }) {
+        return this.bridgeService.getQuote(body.amount, body.toToken, body.toChain, body.isDemo);
+    }
+
+    @Post('tx/create')
+    async createTransaction(@Body() body: { requestId: string; userWalletAddress: string; isDemo?: boolean }) {
+        return this.bridgeService.createTransaction(body.requestId, body.userWalletAddress, body.isDemo);
     }
 
     @Get('status/:txId')

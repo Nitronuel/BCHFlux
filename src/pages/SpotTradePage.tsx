@@ -132,6 +132,7 @@ const SpotTradePage: React.FC = () => {
                             baseSymbol={baseSymbol}
                             quoteSymbol={quoteSymbol}
                             chainId={currentMarket?.chainId}
+                            pairAddress={currentMarket?.pairAddress}
                         />
                     </div>
                 </div>
@@ -169,6 +170,7 @@ const SpotTradePage: React.FC = () => {
                         baseSymbol={baseSymbol}
                         quoteSymbol={quoteSymbol}
                         chainId={currentMarket?.chainId}
+                        pairAddress={currentMarket?.pairAddress}
                     />
                     <div className="flex-1 p-4 hidden lg:block border-t border-border">
                         <div className="text-sm font-bold mb-4">Assets</div>

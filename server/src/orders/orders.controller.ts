@@ -17,8 +17,11 @@ export class OrdersController {
     }
 
     @Get()
-    findAll(@Query('userId') userId: string) {
-        return this.ordersService.getOpenOrders(userId);
+    findAll(
+        @Query('userId') userId: string,
+        @Query('isDemo') isDemo?: string
+    ) {
+        return this.ordersService.getOpenOrders(userId, isDemo === 'true');
     }
 
     @Delete(':id')
