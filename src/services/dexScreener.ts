@@ -100,26 +100,26 @@ export const fetchDexScreenerTrends = async (): Promise<MarketCoin[]> => {
 
 export const fetchTokenByAddress = async (address: string): Promise<MarketCoin | null> => {
     try {
-        // Direct call to DexScreener API to ensure we get the latest tokens (PumpFun, etc.)
-        // The endpoint is /tokens/{tokenAddress}
-        const url = `https://api.dexscreener.com/latest/dex/tokens/${address}`;
+        // Route through our NestJS Backend Proxy to include User-Agent headers and bypass Cloudflare WAF blocks
+        const url = `${DEXSCREENER_API_BASE}/tokens/${address}`;
         const response = await axios.get<{ pairs: DexScreenerPair[] }>(url);
 
         const pairs = response.data.pairs;
         if (!pairs || pairs.length === 0) return null;
 
         // Preferred quote tokens (these pairs usually have chart data)
-        const preferredQuotes = ['SOL', 'WSOL', 'ETH', 'WETH', 'BNB', 'WBNB'];
+        const preferredQuotes = ['SOL', 'WSOL', 'ETH', 'WETH', 'BNB', 'WBNB', 'BCH', 'WBCH'];
 
-        // First, try to find a pair with a preferred quote token (SOL pairs usually have chart data)
+        // First, try to find a pair with a preferred quote token
         let bestPair = pairs.find(pair => {
-            // Check if the pair URL or dexId suggests a SOL/ETH pair
             const pairUrl = pair.url?.toLowerCase() || '';
             const dexId = pair.dexId?.toLowerCase() || '';
             return preferredQuotes.some(q =>
                 pairUrl.includes(q.toLowerCase()) ||
-                dexId.includes('raydium') || // Raydium pairs are usually SOL pairs
-                dexId.includes('orca')        // Orca pairs are usually SOL pairs
+                dexId.includes('raydium') ||
+                dexId.includes('orca') ||
+                dexId.includes('mistswap') ||
+                dexId.includes('benswap')
             );
         });
 
